@@ -16,7 +16,7 @@ export interface Token {
 }
 
 /** A new scout may have this many records waiting; each verified one raises it by one, up to the max. */
-export const PENDING_CAP_START = 20;
+export const PENDING_CAP_START = 50;
 export const PENDING_CAP_MAX = 200;
 /** A scout with this many reviewed records, more than half rejected, is suspended. */
 export const SUSPEND_AFTER = 10;

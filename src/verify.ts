@@ -16,7 +16,7 @@
 
 import { suspendIfFailing, type Token } from './tokens.ts';
 import { HttpError, newId, nowIso, plusMinutes } from './util.ts';
-import { addDays, today, validateVoucher, type Voucher } from './voucher.ts';
+import { addDays, identityKey, today, validateVoucher, type Voucher } from './voucher.ts';
 
 export const LEASE_MINUTES = 30;
 export const LEASE_MAX = 10;
@@ -139,13 +139,30 @@ export async function applyVerdicts(db: D1Database, token: Token, body: unknown,
     if (task && !row) errors.push('the record for this task no longer exists');
 
     // Corrections are re-checked against the same rules as a submit.
+    // A verifier may also send a fresh `evidence` passage from the same source page, which
+    // lets a correction add a code the scout's quote did not contain.
     let data = row ? (JSON.parse(row.data_json) as Voucher) : null;
-    if (data && verdict === 'verified' && v.corrections && typeof v.corrections === 'object') {
-      const merged = { ...data, ...(v.corrections as object) };
+    let newEvidence: string | null = null;
+    const hasCorrections = v.corrections && typeof v.corrections === 'object';
+    const hasEvidence = typeof v.evidence === 'string' && v.evidence.trim() !== '';
+    if (data && verdict === 'verified' && (hasCorrections || hasEvidence)) {
+      const merged = { ...data, ...(hasCorrections ? (v.corrections as object) : {}) };
       const current = await db.prepare('SELECT source_url, evidence FROM vouchers WHERE id = ?').bind(row!.id).first<{ source_url: string; evidence: string }>();
-      const checked = validateVoucher(merged, current, now);
-      if (!checked.ok) errors.push(...checked.errors.map((e) => `corrections.${e.field} ${e.message}`));
-      else data = checked.voucher;
+      const provenance = hasEvidence ? { source_url: current?.source_url, evidence: v.evidence } : current;
+      const checked = validateVoucher(merged, provenance, now);
+      if (!checked.ok) errors.push(...checked.errors.map((e) => `${e.field === 'evidence' ? 'evidence' : `corrections.${e.field}`} ${e.message}`));
+      else {
+        data = checked.voucher;
+        if (hasEvidence) newEvidence = checked.provenance.evidence;
+      }
+    }
+    const newKey = data ? identityKey(data) : null;
+    if (data && row && newKey) {
+      const clash = await db
+        .prepare("SELECT id FROM vouchers WHERE identity_key = ? AND id != ? AND status IN ('pending','verified')")
+        .bind(newKey, row.id)
+        .first<{ id: string }>();
+      if (clash && verdict === 'verified') errors.push(`after corrections this record is the same offer as ${clash.id}: send verdict duplicate with duplicate_of instead`);
     }
     let duplicateOf: string | null = null;
     if (verdict === 'duplicate') {
@@ -187,11 +204,11 @@ export async function applyVerdicts(db: D1Database, token: Token, body: unknown,
       statements.push(
         db
           .prepare(
-            `UPDATE vouchers SET status = ?, data_json = ?, expires_on = ?, verification_level = ?, verified_at = ?,
-               next_check_at = ?, updated_at = ? WHERE id = ?`,
+            `UPDATE vouchers SET status = ?, data_json = ?, identity_key = ?, evidence = COALESCE(?, evidence), expires_on = ?,
+               verification_level = ?, verified_at = ?, next_check_at = ?, updated_at = ? WHERE id = ?`,
           )
           .bind(
-            newStatus, JSON.stringify(data), data.expires_on, verified ? 'L1' : null, verified ? stamp : null,
+            newStatus, JSON.stringify(data), newKey, newEvidence, data.expires_on, verified ? 'L1' : null, verified ? stamp : null,
             verified ? new Date(now.getTime() + RECHECK_HOURS * 3_600_000).toISOString() : null, stamp, row.id,
           ),
         db.prepare("UPDATE tasks SET status = 'done', done_at = ?, note = ? WHERE id = ?").bind(stamp, `${verdict}: ${reason}`, task.id),

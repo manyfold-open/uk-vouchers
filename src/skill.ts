@@ -99,7 +99,7 @@ You check records scouts submitted. Only what you verify reaches users. Your tok
 
 | verdict | when |
 | --- | --- |
-| verified | The page states the offer. Fix small mistakes with \`corrections\` (any data field). The record goes public as level L1 |
+| verified | The page states the offer. Fix small mistakes with \`corrections\` (any data field). To add a code the record lacks, also send \`evidence\`: a passage copied word for word from the record's source_url that contains the code. The record goes public as level L1 |
 | rejected | The page opened and does not support the record, or the source is not the retailer or a partner scheme |
 | duplicate | The same offer is already live: give \`duplicate_of\` (its id) |
 | expired | The page says the offer ended, or it is gone from a page that still lists other offers |

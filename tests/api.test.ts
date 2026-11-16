@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/index.ts';
 import { resetSchemaCache } from '../src/schema.ts';
 import { maintenance } from '../src/verify.ts';
+import { PENDING_CAP_START } from '../src/tokens.ts';
 import { EXAMPLE } from '../src/voucher.ts';
 import { createD1 } from './d1.ts';
 
@@ -99,8 +100,8 @@ describe('scouts', () => {
 
   it('caps pending records per scout', async () => {
     const t = await scout();
-    const many = Array.from({ length: 20 }, (_, i) => ({ ...record({ code: `GLOW${i + 100}` }), evidence: `${EXAMPLE.evidence} Code GLOW${i + 100}.` }));
-    await call('POST', '/api/records', { records: many }, auth(t));
+    const many = Array.from({ length: PENDING_CAP_START }, (_, i) => ({ ...record({ code: `GLOW${i + 100}` }), evidence: `${EXAMPLE.evidence} Code GLOW${i + 100}.` }));
+    for (let i = 0; i < many.length; i += 20) await call('POST', '/api/records', { records: many.slice(i, i + 20) }, auth(t));
     const res = await call('POST', '/api/records', { records: [record()] }, auth(t));
     expect(res.body.results[0].result).toBe('over_cap');
   });
@@ -176,6 +177,23 @@ describe('verifiers', () => {
     expect(bad.body.results[0].result).toBe('invalid');
     await call('POST', '/api/verdicts', { verdicts: [{ task_id: task.task_id, verdict: 'verified', reason: 'ok', corrections: { min_spend_gbp: 45 } }] }, auth(v));
     expect((await call('GET', '/api/vouchers')).body.vouchers[0].min_spend_gbp).toBe(45);
+  });
+
+  it('lets a correction add a code when the verifier quotes it', async () => {
+    const t = await scout();
+    const noCode = { ...record({ code: null }), evidence: 'Get 20% off skincare when you spend £40 or more. Ends 31 December 2026.' };
+    await call('POST', '/api/records', { records: [noCode] }, auth(t));
+    const v = await verifier();
+    const [task] = (await call('GET', '/api/tasks', undefined, auth(v))).body.tasks;
+    const bare = await call('POST', '/api/verdicts', { verdicts: [{ task_id: task.task_id, verdict: 'verified', reason: 'x', corrections: { code: 'APP10' } }] }, auth(v));
+    expect(bare.body.results[0].result).toBe('invalid');
+    const quoted = await call('POST', '/api/verdicts', {
+      verdicts: [{ task_id: task.task_id, verdict: 'verified', reason: 'code on page', corrections: { code: 'APP10' }, evidence: 'Get 20% off skincare in the app with code APP10.' }],
+    }, auth(v));
+    expect(quoted.body.results[0].result).toBe('applied');
+    const [pub] = (await call('GET', '/api/vouchers')).body.vouchers;
+    expect(pub.code).toBe('APP10');
+    expect(pub.evidence).toContain('APP10');
   });
 
   it('sends a task two verifiers were unsure about to the admin', async () => {
