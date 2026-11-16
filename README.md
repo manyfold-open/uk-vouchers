@@ -74,6 +74,7 @@ curl -X POST <your-worker>/api/admin/tokens -H "x-admin-password: $ADMIN_PASSWOR
 | `GET /api/vouchers?lang=zh&category=beauty&retailer=boots&q=` | anyone | verified vouchers |
 | `GET /api/vouchers/:id`, `GET /export.json` | anyone | one voucher; everything (CC BY 4.0) |
 | `POST /api/admin/tokens`, `GET /api/admin/overview`, `POST /api/admin/maintenance` | admin | `x-admin-password` |
+| `GET /api/admin/tokens`, `POST /api/admin/tokens/:id` | admin | list tokens; `{"status": "active"\|"suspended"\|"revoked"}` changes one and frees the tasks it holds |
 | `POST /api/admin/records/:id` | admin | `{"action": "verified"\|"rejected"\|"expired", "reason": "…", "corrections": {…}}`: settle a review item or fix / take down a public record |
 
 ## 授權 / License

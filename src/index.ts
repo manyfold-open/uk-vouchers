@@ -147,6 +147,33 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
     return c.json(await issueToken(c.env.DB, body.role, body.label, body.capabilities ?? []), 201);
   });
 
+  app.get('/api/admin/tokens', async (c) => {
+    admin(c);
+    const { results } = await c.env.DB
+      .prepare('SELECT id, role, label, status, created_at, last_used_at FROM tokens ORDER BY created_at')
+      .all();
+    return c.json({ tokens: results });
+  });
+
+  // Revoke, suspend or reactivate a token. Tasks it holds go back to the pool at once.
+  app.post('/api/admin/tokens/:id', async (c) => {
+    admin(c);
+    const body = (await json(c)) as { status?: string };
+    if (body.status !== 'active' && body.status !== 'suspended' && body.status !== 'revoked') {
+      throw new HttpError(400, 'status must be active, suspended or revoked.');
+    }
+    const id = c.req.param('id');
+    const res = await c.env.DB.prepare('UPDATE tokens SET status = ? WHERE id = ?').bind(body.status, id).run();
+    if (!res.meta.changes) throw new HttpError(404, 'No token has this id.');
+    if (body.status !== 'active') {
+      await c.env.DB
+        .prepare("UPDATE tasks SET status = 'open', leased_by = NULL, lease_until = NULL WHERE leased_by = ? AND status = 'leased'")
+        .bind(id)
+        .run();
+    }
+    return c.json({ id, status: body.status });
+  });
+
   app.get('/api/admin/overview', async (c) => {
     admin(c);
     const { results: records } = await c.env.DB.prepare('SELECT status, COUNT(*) AS n FROM vouchers GROUP BY status').all();

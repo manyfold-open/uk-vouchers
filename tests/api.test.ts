@@ -196,6 +196,19 @@ describe('verifiers', () => {
     expect(pub.evidence).toContain('APP10');
   });
 
+  it('lets the admin revoke a token and frees its tasks', async () => {
+    await submitted();
+    const v = await verifier();
+    expect((await call('GET', '/api/tasks', undefined, auth(v))).body.tasks).toHaveLength(1);
+    const { body: list } = await call('GET', '/api/admin/tokens', undefined, { 'x-admin-password': 'pw' });
+    const mine = list.tokens.find((t: { label: string }) => t.label === 'verifier-1');
+    const res = await call('POST', `/api/admin/tokens/${mine.id}`, { status: 'revoked' }, { 'x-admin-password': 'pw' });
+    expect(res.body.status).toBe('revoked');
+    expect((await call('GET', '/api/tasks', undefined, auth(v))).status).toBe(403);
+    const other = await verifier('verifier-2');
+    expect((await call('GET', '/api/tasks', undefined, auth(other))).body.tasks).toHaveLength(1);
+  });
+
   it('sends a task two verifiers were unsure about to the admin', async () => {
     await submitted();
     for (const name of ['v1', 'v2']) {
