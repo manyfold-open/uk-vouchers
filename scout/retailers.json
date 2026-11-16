@@ -1,0 +1,260 @@
+{
+ "_note": "Starting watchlist of UK retailers for scouts. Home pages only: a scout finds each site's offers page itself and records it as offer_url. Edit freely.",
+ "retailers": [
+  {
+   "name": "Boots",
+   "url": "https://www.boots.com",
+   "category": "health"
+  },
+  {
+   "name": "Superdrug",
+   "url": "https://www.superdrug.com",
+   "category": "health"
+  },
+  {
+   "name": "LOOKFANTASTIC",
+   "url": "https://www.lookfantastic.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Cult Beauty",
+   "url": "https://www.cultbeauty.co.uk",
+   "category": "beauty"
+  },
+  {
+   "name": "Space NK",
+   "url": "https://www.spacenk.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Sephora UK",
+   "url": "https://www.sephora.co.uk",
+   "category": "beauty"
+  },
+  {
+   "name": "The Body Shop",
+   "url": "https://www.thebodyshop.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Charlotte Tilbury",
+   "url": "https://www.charlottetilbury.com",
+   "category": "beauty"
+  },
+  {
+   "name": "ASOS",
+   "url": "https://www.asos.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Next",
+   "url": "https://www.next.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Marks & Spencer",
+   "url": "https://www.marksandspencer.com",
+   "category": "fashion"
+  },
+  {
+   "name": "John Lewis",
+   "url": "https://www.johnlewis.com",
+   "category": "home"
+  },
+  {
+   "name": "Uniqlo UK",
+   "url": "https://www.uniqlo.com",
+   "category": "fashion"
+  },
+  {
+   "name": "River Island",
+   "url": "https://www.riverisland.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Boohoo",
+   "url": "https://www.boohoo.com",
+   "category": "fashion"
+  },
+  {
+   "name": "PrettyLittleThing",
+   "url": "https://www.prettylittlething.com",
+   "category": "fashion"
+  },
+  {
+   "name": "New Look",
+   "url": "https://www.newlook.com",
+   "category": "fashion"
+  },
+  {
+   "name": "JD Sports",
+   "url": "https://www.jdsports.co.uk",
+   "category": "sports"
+  },
+  {
+   "name": "Sports Direct",
+   "url": "https://www.sportsdirect.com",
+   "category": "sports"
+  },
+  {
+   "name": "Nike UK",
+   "url": "https://www.nike.com",
+   "category": "sports"
+  },
+  {
+   "name": "adidas UK",
+   "url": "https://www.adidas.co.uk",
+   "category": "sports"
+  },
+  {
+   "name": "END. Clothing",
+   "url": "https://www.endclothing.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Selfridges",
+   "url": "https://www.selfridges.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Harrods",
+   "url": "https://www.harrods.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Harvey Nichols",
+   "url": "https://www.harveynichols.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Flannels",
+   "url": "https://www.flannels.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Farfetch",
+   "url": "https://www.farfetch.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Mytheresa",
+   "url": "https://www.mytheresa.com",
+   "category": "luxury"
+  },
+  {
+   "name": "Tesco",
+   "url": "https://www.tesco.com",
+   "category": "grocery"
+  },
+  {
+   "name": "Sainsbury's",
+   "url": "https://www.sainsburys.co.uk",
+   "category": "grocery"
+  },
+  {
+   "name": "Ocado",
+   "url": "https://www.ocado.com",
+   "category": "grocery"
+  },
+  {
+   "name": "Waitrose",
+   "url": "https://www.waitrose.com",
+   "category": "grocery"
+  },
+  {
+   "name": "Asda",
+   "url": "https://www.asda.com",
+   "category": "grocery"
+  },
+  {
+   "name": "Currys",
+   "url": "https://www.currys.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Argos",
+   "url": "https://www.argos.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "AO.com",
+   "url": "https://ao.com",
+   "category": "electronics"
+  },
+  {
+   "name": "Amazon UK",
+   "url": "https://www.amazon.co.uk",
+   "category": "other"
+  },
+  {
+   "name": "Apple UK",
+   "url": "https://www.apple.com",
+   "category": "electronics"
+  },
+  {
+   "name": "Samsung UK",
+   "url": "https://www.samsung.com",
+   "category": "electronics"
+  },
+  {
+   "name": "IKEA UK",
+   "url": "https://www.ikea.com",
+   "category": "home"
+  },
+  {
+   "name": "Dunelm",
+   "url": "https://www.dunelm.com",
+   "category": "home"
+  },
+  {
+   "name": "Wayfair UK",
+   "url": "https://www.wayfair.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "The White Company",
+   "url": "https://www.thewhitecompany.com",
+   "category": "home"
+  },
+  {
+   "name": "Deliveroo",
+   "url": "https://deliveroo.co.uk",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Just Eat",
+   "url": "https://www.just-eat.co.uk",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Uber Eats",
+   "url": "https://www.ubereats.com",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Trainline",
+   "url": "https://www.thetrainline.com",
+   "category": "travel"
+  },
+  {
+   "name": "Booking.com",
+   "url": "https://www.booking.com",
+   "category": "travel"
+  },
+  {
+   "name": "easyJet",
+   "url": "https://www.easyjet.com",
+   "category": "travel"
+  },
+  {
+   "name": "Pets at Home",
+   "url": "https://www.petsathome.com",
+   "category": "pets"
+  },
+  {
+   "name": "Mamas & Papas",
+   "url": "https://www.mamasandpapas.com",
+   "category": "kids"
+  }
+ ]
+}

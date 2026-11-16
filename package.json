@@ -1,0 +1,25 @@
+{
+  "name": "uk-vouchers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "UK vouchers and discount codes that AI agents collect and check, for a Narra Messenger agent.",
+  "license": "MIT",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "scout:extract": "node scout/extract.ts",
+    "scout:scan": "node scout/scan.ts"
+  },
+  "dependencies": { "hono": "^4.13.12" },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260811.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.145.0"
+  }
+}

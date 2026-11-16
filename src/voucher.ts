@@ -1,0 +1,250 @@
+/**
+ * What a voucher record is, and the rules a submitted one must pass.
+ *
+ * Every user-facing text comes in English and Traditional Chinese (title_en / title_zh,
+ * terms_en / terms_zh), because the Narra agent answers in both. Everything else is
+ * language-neutral: enums, numbers, dates, URLs.
+ *
+ * Runs in the Worker and in plain Node (the scout tools and tests), so it imports
+ * nothing and uses only type syntax Node can strip.
+ */
+
+export const DISCOUNT_TYPES = ['percent', 'fixed', 'free-delivery', 'bogo', 'gift', 'cashback', 'other'] as const;
+export const CATEGORIES = [
+  'beauty', 'fashion', 'luxury', 'grocery', 'home', 'electronics', 'health',
+  'travel', 'food-delivery', 'kids', 'sports', 'pets', 'other',
+] as const;
+export const ELIGIBILITY = ['everyone', 'new-customer', 'student', 'nhs-blue-light', 'members', 'app-only'] as const;
+export const SOURCE_TYPES = ['retailer-site', 'newsletter', 'partner-scheme', 'social'] as const;
+
+export type DiscountType = (typeof DISCOUNT_TYPES)[number];
+export type Category = (typeof CATEGORIES)[number];
+export type Eligibility = (typeof ELIGIBILITY)[number];
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+/** Chinese labels the Narra agent shows next to the enum values. */
+export const LABELS_ZH: Record<string, string> = {
+  percent: '折扣 %', fixed: '現折 £', 'free-delivery': '免運', bogo: '買一送一', gift: '滿額贈', cashback: '現金回饋', other: '其他',
+  beauty: '美妝', fashion: '時尚', luxury: '精品', grocery: '超市', home: '居家', electronics: '3C 電子', health: '保健藥妝',
+  travel: '旅遊', 'food-delivery': '外送餐飲', kids: '母嬰兒童', sports: '運動戶外', pets: '寵物',
+  everyone: '所有人', 'new-customer': '新客限定', student: '學生', 'nhs-blue-light': 'NHS / Blue Light', members: '會員限定', 'app-only': 'App 限定',
+};
+
+export interface Voucher {
+  retailer: string;
+  retailer_url: string;
+  title_en: string;
+  title_zh: string;
+  code: string | null;
+  discount_type: DiscountType;
+  discount_value: number | null;
+  min_spend_gbp: number | null;
+  category: Category;
+  eligibility: Eligibility;
+  starts_on: string | null;
+  expires_on: string | null;
+  offer_url: string;
+  terms_en: string | null;
+  terms_zh: string | null;
+  source_type: SourceType;
+}
+
+export interface Provenance {
+  /** The page the facts were read on. Must belong to the retailer or a partner scheme. */
+  source_url: string;
+  /** A passage copied word for word from source_url that states the offer (and the code, if any). */
+  evidence: string;
+}
+
+export interface FieldError {
+  field: string;
+  message: string;
+}
+
+/**
+ * Pages that can state another company's offer: the student and key-worker schemes.
+ * Coupon aggregators (HotUKDeals, VoucherCodes, …) are deliberately absent: a scout may
+ * use them as a hint, but the record's source must be the retailer itself or one of these.
+ */
+export const PARTNER_SOURCES = [
+  'myunidays.com', 'studentbeans.com', 'totum.com', 'bluelightcard.co.uk',
+  'healthservicediscounts.com', 'nhsdiscounts.org.uk',
+] as const;
+
+const CODE_RE = /^[A-Z0-9][A-Z0-9_-]{2,31}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Registrable-ish host: lowercased, without a leading www. */
+export const hostOf = (url: string): string => new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+
+/** Whether `host` is `domain` or one of its subdomains. */
+export const sameSite = (host: string, domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
+
+/** The retailer's domain, which identifies it across records ("boots.com"). */
+export const retailerDomain = (v: Pick<Voucher, 'retailer_url'>): string => hostOf(v.retailer_url);
+
+/**
+ * One identity per live offer: the retailer and the code, or for an automatic discount
+ * the retailer and its English title, lowercased with punctuation squeezed out.
+ */
+export function identityKey(v: Pick<Voucher, 'retailer_url' | 'code' | 'title_en'>): string {
+  const who = retailerDomain(v);
+  if (v.code) return `${who}|code:${v.code.toUpperCase()}`;
+  return `${who}|title:${v.title_en.toLowerCase().replace(/[^\p{L}\p{N}%£]+/gu, ' ').trim()}`;
+}
+
+const isUrl = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+};
+
+const isDate = (value: unknown): value is string =>
+  typeof value === 'string' && DATE_RE.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+
+export const today = (now = new Date()): string => now.toISOString().slice(0, 10);
+export const addDays = (date: string, days: number): string =>
+  new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Check one submitted record. Returns the cleaned record, or every error at once so an
+ * agent can fix its whole batch in one go.
+ */
+export function validateVoucher(
+  input: unknown,
+  provenance: unknown,
+  now = new Date(),
+): { ok: true; voucher: Voucher; provenance: Provenance } | { ok: false; errors: FieldError[] } {
+  const errors: FieldError[] = [];
+  const err = (field: string, message: string) => errors.push({ field, message });
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const prov = (provenance && typeof provenance === 'object' ? provenance : {}) as Record<string, unknown>;
+
+  const text = (field: string, max: number, required: boolean): string | null => {
+    const value = raw[field];
+    if (value === undefined || value === null || value === '') {
+      if (required) err(field, 'is required');
+      return null;
+    }
+    if (typeof value !== 'string') return err(field, 'must be a string'), null;
+    const trimmed = value.replace(/\s+/g, ' ').trim();
+    if (trimmed.length > max) err(field, `must be at most ${max} characters`);
+    return trimmed;
+  };
+  const oneOf = <T extends string>(field: string, values: readonly T[]): T => {
+    const value = raw[field];
+    if (typeof value !== 'string' || !values.includes(value as T)) err(field, `must be one of: ${values.join(', ')}`);
+    return value as T;
+  };
+  const num = (field: string, min: number, max: number): number | null => {
+    const value = raw[field];
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+      err(field, `must be a number from ${min} to ${max}`);
+      return null;
+    }
+    return value;
+  };
+  const date = (field: string): string | null => {
+    const value = raw[field];
+    if (value === undefined || value === null || value === '') return null;
+    if (!isDate(value)) return err(field, 'must be a date written YYYY-MM-DD'), null;
+    return value;
+  };
+
+  const retailer = text('retailer', 80, true);
+  const retailer_url = raw.retailer_url;
+  if (!isUrl(retailer_url)) err('retailer_url', 'must be the retailer’s home page, e.g. https://www.boots.com');
+  const title_en = text('title_en', 160, true);
+  const title_zh = text('title_zh', 120, true);
+  if (title_zh && !/\p{Script=Han}/u.test(title_zh)) err('title_zh', 'must be written in Traditional Chinese');
+
+  let code = text('code', 32, false);
+  if (code) {
+    code = code.toUpperCase();
+    if (!CODE_RE.test(code)) err('code', 'must be the code exactly as shoppers type it: 3–32 letters, digits, - or _');
+  }
+
+  const discount_type = oneOf('discount_type', DISCOUNT_TYPES);
+  const discount_value = num('discount_value', 0, discount_type === 'percent' ? 100 : 10_000);
+  if ((discount_type === 'percent' || discount_type === 'fixed') && discount_value === null && raw.discount_value === undefined) {
+    err('discount_value', `is required when discount_type is ${discount_type}`);
+  }
+  const min_spend_gbp = num('min_spend_gbp', 0, 100_000);
+  const category = oneOf('category', CATEGORIES);
+  const eligibility = oneOf('eligibility', ELIGIBILITY);
+  const source_type = oneOf('source_type', SOURCE_TYPES);
+
+  const starts_on = date('starts_on');
+  const expires_on = date('expires_on');
+  const day = today(now);
+  if (expires_on && expires_on < day) err('expires_on', 'is in the past: expired offers are not collected');
+  if (starts_on && starts_on > addDays(day, 30)) err('starts_on', 'is more than 30 days away: submit it closer to the date');
+  if (starts_on && expires_on && starts_on > expires_on) err('expires_on', 'is before starts_on');
+
+  const offer_url = raw.offer_url;
+  if (!isUrl(offer_url)) err('offer_url', 'must be the retailer’s page for this offer');
+  const terms_en = text('terms_en', 400, false);
+  const terms_zh = text('terms_zh', 300, false);
+
+  // Provenance: an official source, and a passage from it that states the offer.
+  const source_url = prov.source_url;
+  const evidence = typeof prov.evidence === 'string' ? prov.evidence.replace(/\s+/g, ' ').trim() : '';
+  if (!isUrl(source_url)) {
+    err('source_url', 'must be the page the offer was read on');
+  } else if (isUrl(retailer_url)) {
+    const host = hostOf(source_url);
+    const own = retailerDomain({ retailer_url });
+    if (!sameSite(host, own) && !PARTNER_SOURCES.some((p) => sameSite(host, p))) {
+      err('source_url', `must be on ${own} or a partner scheme (${PARTNER_SOURCES.join(', ')}); coupon sites are hints, not sources`);
+    }
+  }
+  if (isUrl(offer_url) && isUrl(retailer_url)) {
+    const own = retailerDomain({ retailer_url });
+    const host = hostOf(offer_url);
+    if (!sameSite(host, own) && !PARTNER_SOURCES.some((p) => sameSite(host, p))) {
+      err('offer_url', `must be on ${own} or a partner scheme`);
+    }
+  }
+  if (evidence.length < 20 || evidence.length > 600) err('evidence', 'must be a passage of 20–600 characters copied word for word from source_url');
+  else if (code && !evidence.toUpperCase().includes(code)) err('evidence', 'must contain the code itself');
+
+  if (errors.length) return { ok: false, errors };
+  return {
+    ok: true,
+    voucher: {
+      retailer: retailer!, retailer_url: retailer_url as string, title_en: title_en!, title_zh: title_zh!, code,
+      discount_type, discount_value, min_spend_gbp, category, eligibility, starts_on, expires_on,
+      offer_url: offer_url as string, terms_en, terms_zh, source_type,
+    },
+    provenance: { source_url: source_url as string, evidence },
+  };
+}
+
+/** The example record the scout skill shows. Made up; it passes validateVoucher. */
+export const EXAMPLE = {
+  data: {
+    retailer: 'Example Beauty',
+    retailer_url: 'https://www.example-beauty.co.uk',
+    title_en: '20% off skincare when you spend £40',
+    title_zh: '保養品滿 £40 打 8 折',
+    code: 'GLOW20',
+    discount_type: 'percent',
+    discount_value: 20,
+    min_spend_gbp: 40,
+    category: 'beauty',
+    eligibility: 'everyone',
+    starts_on: null,
+    expires_on: '2026-12-31',
+    offer_url: 'https://www.example-beauty.co.uk/offers',
+    terms_en: 'Excludes gift cards. One use per customer.',
+    terms_zh: '禮品卡除外，每人限用一次。',
+    source_type: 'retailer-site',
+  },
+  source_url: 'https://www.example-beauty.co.uk/offers',
+  evidence: 'Get 20% off skincare when you spend £40 or more with code GLOW20. Ends 31 December 2026.',
+};
