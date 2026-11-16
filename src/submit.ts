@@ -4,6 +4,10 @@
  * same run. Cheapest checks first: fields, then duplicates, then the cap, then the server
  * reads each source page once to see whether the quoted passage is really there.
  *
+ * With `defer` (the Worker passes ctx.waitUntil), the page reads happen after the answer
+ * is sent: scouts get their results at once, and quote_found is filled in moments later.
+ * Pages that could not be read then are tried again by the cron (backfillQuoteChecks).
+ *
  * An accepted record is stored as pending with its first revision and a verify task.
  * Text that addresses AI agents is accepted but flagged for the admin, with no task.
  */
@@ -29,7 +33,7 @@ export const looksAimedAtAgents = (texts: readonly string[]) =>
   texts.some((t) => AIMED_AT_AGENTS.some((p) => p.test(t)));
 
 export type SubmitResult =
-  | { index: number; result: 'accepted'; id: string; quote_found: boolean | null; flagged: boolean }
+  | { index: number; result: 'accepted'; id: string; quote_found: boolean | null; quote_check: 'done' | 'queued'; flagged: boolean }
   | { index: number; result: 'duplicate'; id: string }
   | { index: number; result: 'invalid'; errors: FieldError[] }
   | { index: number; result: 'over_cap'; message: string };
@@ -40,6 +44,7 @@ export async function submitRecords(
   body: unknown,
   fetcher: typeof fetch = fetch,
   now = new Date(),
+  defer?: (work: Promise<unknown>) => void,
 ): Promise<{ results: SubmitResult[]; standing: Awaited<ReturnType<typeof standing>> }> {
   const records = (body as { records?: unknown })?.records;
   if (!Array.isArray(records) || records.length === 0) {
@@ -76,6 +81,7 @@ export async function submitRecords(
 
   const s = await standing(db, token.id);
   let pending = s.pending;
+  const queued: string[] = [];
   const stamp = nowIso(now);
 
   for (const v of valid) {
@@ -92,8 +98,8 @@ export async function submitRecords(
       });
       continue;
     }
-    const html = await page(v.provenance.source_url);
-    const quoteFound = html === null ? null : quoteOnPage(html, v.provenance.evidence);
+    const html = defer ? undefined : await page(v.provenance.source_url);
+    const quoteFound = html === undefined || html === null ? null : quoteOnPage(html, v.provenance.evidence);
     const texts = [v.voucher.title_en, v.voucher.title_zh, v.voucher.terms_en ?? '', v.voucher.terms_zh ?? '', v.provenance.evidence];
     const flagged = looksAimedAtAgents(texts);
     const id = newId('v');
@@ -101,12 +107,12 @@ export async function submitRecords(
       db
         .prepare(
           `INSERT INTO vouchers (id, identity_key, retailer_domain, status, verification_level, data_json, source_url, evidence,
-             quote_found, expires_on, submitted_by, flagged, created_at, updated_at)
-           VALUES (?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             quote_found, quote_checked_at, expires_on, submitted_by, flagged, created_at, updated_at)
+           VALUES (?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id, v.key, retailerDomain(v.voucher), JSON.stringify(v.voucher), v.provenance.source_url, v.provenance.evidence,
-          quoteFound === null ? null : quoteFound ? 1 : 0, v.voucher.expires_on, token.id, flagged ? 1 : 0, stamp, stamp,
+          quoteFound === null ? null : quoteFound ? 1 : 0, defer ? null : stamp, v.voucher.expires_on, token.id, flagged ? 1 : 0, stamp, stamp,
         ),
       db
         .prepare('INSERT INTO revisions (voucher_id, actor, action, before_json, after_json, created_at) VALUES (?, ?, ?, NULL, ?, ?)')
@@ -135,9 +141,46 @@ export async function submitRecords(
     }
     live.set(v.key, id);
     pending++;
-    results.push({ index: v.index, result: 'accepted', id, quote_found: quoteFound, flagged });
+    results.push({ index: v.index, result: 'accepted', id, quote_found: quoteFound, quote_check: defer ? 'queued' : 'done', flagged });
+    if (defer) queued.push(id);
   }
+  if (defer && queued.length) defer(checkQuotes(db, queued, fetcher));
 
   results.sort((a, b) => a.index - b.index);
   return { results, standing: await standing(db, token.id) };
+}
+
+/**
+ * Read each record's source page and record whether its passage is there. One read per URL.
+ * A page that cannot be read leaves quote_found empty; quote_checked_at is set either way,
+ * so the cron tries a record at most once more.
+ */
+export async function checkQuotes(db: D1Database, ids: string[], fetcher: typeof fetch = fetch, now = new Date()) {
+  if (!ids.length) return;
+  const { results } = await db
+    .prepare(`SELECT id, source_url, evidence FROM vouchers WHERE id IN (${ids.map(() => '?').join(',')})`)
+    .bind(...ids)
+    .all<{ id: string; source_url: string; evidence: string }>();
+  const pages = new Map<string, Promise<string | null>>();
+  for (const r of results) {
+    if (!pages.has(r.source_url)) pages.set(r.source_url, fetchPage(r.source_url, fetcher, 8000).then((p) => (p.ok ? p.html : null)));
+    const html = await pages.get(r.source_url)!;
+    const found = html === null ? null : quoteOnPage(html, r.evidence) ? 1 : 0;
+    await db.prepare('UPDATE vouchers SET quote_found = ?, quote_checked_at = ? WHERE id = ?').bind(found, nowIso(now), r.id).run();
+  }
+}
+
+/** The cron's share: pending records whose page was never read, or could not be read last time. */
+export async function backfillQuoteChecks(db: D1Database, fetcher: typeof fetch = fetch, limit = 25, now = new Date()) {
+  const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
+  const { results } = await db
+    .prepare(
+      `SELECT id FROM vouchers WHERE status = 'pending' AND quote_found IS NULL
+         AND (quote_checked_at IS NULL OR (quote_checked_at < ? AND quote_checked_at > created_at AND created_at > ?))
+       LIMIT ?`,
+    )
+    .bind(hourAgo, new Date(now.getTime() - 86_400_000).toISOString(), limit)
+    .all<{ id: string }>();
+  await checkQuotes(db, results.map((r) => r.id), fetcher, now);
+  return results.length;
 }

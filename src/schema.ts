@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS vouchers (
   source_url         TEXT NOT NULL,
   evidence           TEXT NOT NULL,
   quote_found        INTEGER,
+  quote_checked_at   TEXT,
   expires_on         TEXT,
   submitted_by       TEXT NOT NULL,
   flagged            INTEGER NOT NULL DEFAULT 0,
@@ -29,6 +30,7 @@ CREATE INDEX IF NOT EXISTS vouchers_retailer ON vouchers (retailer_domain, statu
 CREATE INDEX IF NOT EXISTS vouchers_submitter ON vouchers (submitted_by, status);
 CREATE INDEX IF NOT EXISTS vouchers_due ON vouchers (status, next_check_at);
 CREATE INDEX IF NOT EXISTS vouchers_expiry ON vouchers (status, expires_on);
+CREATE INDEX IF NOT EXISTS vouchers_quote_queue ON vouchers (status, quote_checked_at);
 
 CREATE TABLE IF NOT EXISTS revisions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

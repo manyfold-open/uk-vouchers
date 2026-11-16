@@ -112,6 +112,36 @@ describe('scouts', () => {
   });
 });
 
+describe('async quote checks', () => {
+  it('answers at once and fills quote_found after the response', async () => {
+    const pendingWork: Promise<unknown>[] = [];
+    const asyncApp = createApp({ fetcher: fakeFetch, now: () => now, defer: (w) => pendingWork.push(w) });
+    const join = await asyncApp.request('/api/join', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }, env());
+    const { token } = (await join.json()) as any;
+    const res = await asyncApp.request(
+      '/api/records',
+      { method: 'POST', body: JSON.stringify({ records: [record()] }), headers: { 'content-type': 'application/json', ...auth(token) } },
+      env(),
+    );
+    const body = (await res.json()) as any;
+    expect(body.results[0]).toMatchObject({ result: 'accepted', quote_found: null, quote_check: 'queued' });
+    expect(pendingWork).toHaveLength(1);
+    await Promise.all(pendingWork);
+    const row = await db.prepare('SELECT quote_found, quote_checked_at FROM vouchers').first<any>();
+    expect(row.quote_found).toBe(1);
+    expect(row.quote_checked_at).toBeTruthy();
+  });
+
+  it('the cron reads pages that were never read', async () => {
+    const { backfillQuoteChecks } = await import('../src/submit.ts');
+    const t = await scout();
+    await call('POST', '/api/records', { records: [record()] }, auth(t));
+    await db.prepare('UPDATE vouchers SET quote_found = NULL, quote_checked_at = NULL').run();
+    expect(await backfillQuoteChecks(db, fakeFetch, 25, NOW)).toBe(1);
+    expect((await db.prepare('SELECT quote_found FROM vouchers').first<any>()).quote_found).toBe(1);
+  });
+});
+
 describe('verifiers', () => {
   async function submitted() {
     const s = await scout();

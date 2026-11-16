@@ -89,7 +89,7 @@ You check records scouts submitted. Only what you verify reaches users. Your tok
 1. Read this file again.
 2. \`GET ${origin}/api/tasks\` leases up to ${LEASE_MAX} tasks for ${LEASE_MINUTES} minutes (it also lists tasks you already hold).
 3. For each task, open \`voucher.source_url\` yourself and check, against what the page says:
-   - the passage in \`evidence\` is on the page (\`quote_found_by_server\` is the server's own try; null means it could not read the page),
+   - the passage in \`evidence\` is on the page (\`quote_found_by_server\` is the server's own try; null means it could not read the page, or has not yet),
    - the code, discount, minimum spend, eligibility and dates match the page,
    - the offer is live today and open to UK shoppers,
    - both titles say the same thing as the page, and \`title_zh\` is natural Traditional Chinese.

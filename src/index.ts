@@ -7,7 +7,7 @@ import { Hono, type Context } from 'hono';
 import watchlist from '../scout/retailers.json' with { type: 'json' };
 import { ensureSchema } from './schema.ts';
 import { scoutSkill, verifierSkill } from './skill.ts';
-import { submitRecords } from './submit.ts';
+import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
 import { applyVerdicts, leaseTasks, maintenance } from './verify.ts';
@@ -20,7 +20,7 @@ export interface Env {
 
 type AppContext = Context<{ Bindings: Env }>;
 
-export function createApp(options: { fetcher?: typeof fetch; now?: () => Date } = {}) {
+export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; defer?: (work: Promise<unknown>) => void } = {}) {
   const fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
   const now = options.now ?? (() => new Date());
   const app = new Hono<{ Bindings: Env }>();
@@ -77,7 +77,15 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date } 
 
   app.post('/api/records', async (c) => {
     const token = await authenticate(c.env.DB, c.req.header('authorization'), ['scout', 'verifier']);
-    return c.json(await submitRecords(c.env.DB, token, await json(c), fetcher, now()));
+    // Answer at once; the server's reading of each source page continues after the response.
+    let defer: ((work: Promise<unknown>) => void) | undefined;
+    try {
+      const ctx = c.executionCtx;
+      defer = (work) => ctx.waitUntil(work.catch((error) => console.error('quote check', error)));
+    } catch {
+      defer = options.defer;
+    }
+    return c.json(await submitRecords(c.env.DB, token, await json(c), fetcher, now(), defer));
   });
 
   // ---- Verifiers ----
@@ -198,5 +206,6 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env) {
     await ensureSchema(env.DB);
     await maintenance(env.DB);
+    await backfillQuoteChecks(env.DB);
   },
 } satisfies ExportedHandler<Env>;
