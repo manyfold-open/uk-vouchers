@@ -209,6 +209,30 @@ describe('verifiers', () => {
     expect(overview.review).toHaveLength(1);
   });
 
+  it('lets the admin settle a record verifiers could not, and fix or take down a public one', async () => {
+    await submitted();
+    for (const name of ['v1', 'v2']) {
+      const v = await verifier(name);
+      const [task] = (await call('GET', '/api/tasks', undefined, auth(v))).body.tasks;
+      await call('POST', '/api/verdicts', { verdicts: [{ task_id: task.task_id, verdict: 'unsure', reason: 'Page blocked me (403).' }] }, auth(v));
+    }
+    const pw = { 'x-admin-password': 'pw' };
+    const [item] = (await call('GET', '/api/admin/overview', undefined, pw)).body.review;
+    expect((await call('POST', `/api/admin/records/${item.id}`, { action: 'verified' }, pw)).status).toBe(400); // no reason
+    expect((await call('POST', `/api/admin/records/${item.id}`, { action: 'verified', reason: 'x' })).status).toBe(401);
+    const bad = await call('POST', `/api/admin/records/${item.id}`, { action: 'verified', reason: 'x', corrections: { evidence: 'too short' } }, pw);
+    expect(bad.status).toBe(400);
+
+    const ok = await call('POST', `/api/admin/records/${item.id}`, { action: 'verified', reason: 'Opened it myself.', corrections: { min_spend_gbp: 50 } }, pw);
+    expect(ok.body).toEqual({ id: item.id, status: 'verified' });
+    expect((await call('GET', '/api/vouchers')).body.vouchers[0].min_spend_gbp).toBe(50);
+    expect((await call('GET', '/api/admin/overview', undefined, pw)).body.review).toHaveLength(0);
+
+    await call('POST', `/api/admin/records/${item.id}`, { action: 'rejected', reason: 'Only an "up to" claim.' }, pw);
+    expect((await call('GET', '/api/vouchers')).body.total).toBe(0);
+    expect((await call('POST', '/api/admin/records/v_nope', { action: 'rejected', reason: 'x' }, pw)).status).toBe(404);
+  });
+
   it('rechecks public records daily and takes ended ones down', async () => {
     await submitted();
     const v = await verifier();

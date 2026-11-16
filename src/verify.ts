@@ -267,3 +267,71 @@ export async function maintenance(db: D1Database, now = new Date()) {
   }
   return { expired: ended.length, rechecks_queued: due.length, tomorrow: addDays(day, 1) };
 }
+
+const ADMIN_ACTIONS = ['verified', 'rejected', 'expired'] as const;
+
+/**
+ * The admin's own decision on one record: settles tasks two verifiers were unsure about, and
+ * fixes or takes down a public record. `corrections` may change any data field, and also
+ * `source_url` and `evidence` (checked by the same rules as a submit). Closes every open task
+ * for the record and keeps a revision.
+ */
+export async function adminDecide(db: D1Database, id: string, body: unknown, now = new Date()) {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const action = b.action as (typeof ADMIN_ACTIONS)[number];
+  if (!ADMIN_ACTIONS.includes(action)) throw new HttpError(400, `action must be one of: ${ADMIN_ACTIONS.join(', ')}`);
+  const reason = typeof b.reason === 'string' ? b.reason.trim().slice(0, 500) : '';
+  if (!reason) throw new HttpError(400, 'reason is required.');
+
+  const row = await db
+    .prepare('SELECT id, status, data_json, source_url, evidence, submitted_by FROM vouchers WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; status: string; data_json: string; source_url: string; evidence: string; submitted_by: string }>();
+  if (!row) throw new HttpError(404, 'No record has this id.');
+
+  let data = JSON.parse(row.data_json) as Voucher;
+  let source_url = row.source_url;
+  let evidence = row.evidence;
+  if (b.corrections !== undefined) {
+    if (action !== 'verified' || !b.corrections || typeof b.corrections !== 'object') {
+      throw new HttpError(400, 'corrections go with action "verified" and must be an object.');
+    }
+    const { source_url: su, evidence: ev, ...fields } = b.corrections as Record<string, unknown>;
+    const checked = validateVoucher({ ...data, ...fields }, { source_url: su ?? source_url, evidence: ev ?? evidence }, now);
+    if (!checked.ok) throw new HttpError(400, checked.errors.map((e) => `corrections.${e.field} ${e.message}`).join('; '));
+    data = checked.voucher;
+    source_url = checked.provenance.source_url;
+    evidence = checked.provenance.evidence;
+  }
+
+  const key = identityKey(data);
+  if (action === 'verified') {
+    const clash = await db
+      .prepare("SELECT id FROM vouchers WHERE identity_key = ? AND id != ? AND status IN ('pending','verified')")
+      .bind(key, row.id)
+      .first<{ id: string }>();
+    if (clash) throw new HttpError(409, `This is the same offer as ${clash.id}: reject one of them instead.`);
+  }
+
+  const stamp = nowIso(now);
+  const verified = action === 'verified';
+  const before = { status: row.status, data: JSON.parse(row.data_json), source_url: row.source_url, evidence: row.evidence };
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE vouchers SET status = ?, data_json = ?, identity_key = ?, source_url = ?, evidence = ?, expires_on = ?, verification_level = ?,
+           verified_at = ?, next_check_at = ?, updated_at = ? WHERE id = ?`,
+      )
+      .bind(
+        action, JSON.stringify(data), key, source_url, evidence, data.expires_on, verified ? 'L1' : null, verified ? stamp : null,
+        verified ? new Date(now.getTime() + RECHECK_HOURS * 3_600_000).toISOString() : null, stamp, row.id,
+      ),
+    db
+      .prepare("UPDATE tasks SET status = 'done', done_at = ?, leased_by = NULL, lease_until = NULL, note = ? WHERE voucher_id = ? AND status IN ('open','leased','needs_human')")
+      .bind(stamp, `admin ${action}: ${reason}`, row.id),
+    db
+      .prepare('INSERT INTO revisions (voucher_id, actor, action, before_json, after_json, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(row.id, 'admin', `admin:${action}`, JSON.stringify(before), JSON.stringify({ status: action, data, source_url, evidence }), reason, stamp),
+  ]);
+  return { id: row.id, status: action };
+}

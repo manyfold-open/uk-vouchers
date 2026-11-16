@@ -10,7 +10,7 @@ import { scoutSkill, verifierSkill } from './skill.ts';
 import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
-import { applyVerdicts, leaseTasks, maintenance } from './verify.ts';
+import { adminDecide, applyVerdicts, leaseTasks, maintenance } from './verify.ts';
 import { LABELS_ZH, type Voucher } from './voucher.ts';
 
 export interface Env {
@@ -159,6 +159,11 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
       )
       .all();
     return c.json({ records, tasks, review });
+  });
+
+  app.post('/api/admin/records/:id', async (c) => {
+    admin(c);
+    return c.json(await adminDecide(c.env.DB, c.req.param('id'), await json(c), now()));
   });
 
   app.post('/api/admin/maintenance', async (c) => {
