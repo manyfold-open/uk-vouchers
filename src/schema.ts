@@ -1,7 +1,9 @@
 /**
  * The D1 schema, applied on the first request of each Worker instance.
- * Evolve it only with CREATE … IF NOT EXISTS, and keep semicolons out of statement
- * bodies: schemaStatements() splits on them.
+ * Evolve it with CREATE … IF NOT EXISTS, and keep semicolons out of statement bodies:
+ * schemaStatements() splits on them. A column added to an existing table also goes in
+ * ADDED_COLUMNS, because CREATE TABLE IF NOT EXISTS skips a table that is already there:
+ * ensureSchema adds those columns before it creates the indexes that use them.
  */
 
 export const SCHEMA = `
@@ -81,11 +83,29 @@ CREATE INDEX IF NOT EXISTS join_log_ip ON join_log (ip, created_at);
 export const schemaStatements = (): string[] =>
   SCHEMA.split(';').map((s) => s.trim()).filter(Boolean);
 
+/** Columns added after a table was first created: [table, column, type]. Never remove an entry. */
+export const ADDED_COLUMNS: readonly [string, string, string][] = [['vouchers', 'quote_checked_at', 'TEXT']];
+
 let applied = new WeakSet<D1Database>();
 
 export async function ensureSchema(db: D1Database): Promise<void> {
   if (applied.has(db)) return;
-  await db.batch(schemaStatements().map((sql) => db.prepare(sql)));
+  const statements = schemaStatements();
+  const tables = statements.filter((sql) => /^CREATE TABLE/i.test(sql));
+  const rest = statements.filter((sql) => !/^CREATE TABLE/i.test(sql));
+  await db.batch(tables.map((sql) => db.prepare(sql)));
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const { results } = await db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all<{ name: string }>();
+    if (!results.some((r) => r.name === column)) {
+      try {
+        await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
+      } catch (error) {
+        // Another instance added it between our look and our ALTER.
+        if (!/duplicate column/i.test(String(error))) throw error;
+      }
+    }
+  }
+  await db.batch(rest.map((sql) => db.prepare(sql)));
   applied.add(db);
 }
 

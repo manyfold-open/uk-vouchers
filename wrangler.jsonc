@@ -4,7 +4,7 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   // Create it with: npx wrangler d1 create uk-vouchers-db, then paste the id here.
-  "d1_databases": [{ "binding": "DB", "database_name": "uk-vouchers-db", "database_id": "REPLACE_WITH_YOUR_D1_ID" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "uk-vouchers-db", "database_id": "a14a8082-f48c-482d-9054-36d9865e5618" }],
   // Housekeeping: free expired leases, take down ended offers, queue daily rechecks.
   "triggers": { "crons": ["*/15 * * * *"] }
 }
