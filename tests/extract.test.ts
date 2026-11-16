@@ -75,6 +75,18 @@ describe('blockedPage', () => {
   });
 });
 
+it('offerLinks keeps promotion terms under /help, and skips products and gift vouchers', () => {
+  const page = `<a href="/info/help/promotions-terms-and-conditions">Promotion T&Cs</a>
+    <a href="/p/beauty-box/the-advent-calendar/17691490/">Offer box</a>
+    <a href="/gift-vouchers/">Gift voucher offers</a> <a href="/evouchers">eVoucher deals</a> <a href="/help/delivery">Help: delivery offers</a>`;
+  expect(offerLinks(page, 'https://www.dunelm.com/').map((l) => l.url)).toEqual(['https://www.dunelm.com/info/help/promotions-terms-and-conditions']);
+});
+
+it('leaves site chrome out of a code’s context', () => {
+  const page = '<p>Skip to main content</p><p>Menu</p><p>Enjoy 15% Off Your First Order Using Code FIRST15</p><p>Shop skincare</p>';
+  expect(extractOffers(page, 'https://www.spacenk.com/', '2026-11-16').codes[0].context).toEqual(['Shop skincare']);
+});
+
 it('offerLinks ignores other sites', () => {
   expect(offerLinks('<a href="https://other.com/offers">Offers</a>', 'https://www.shop.co.uk/')).toEqual([]);
 });

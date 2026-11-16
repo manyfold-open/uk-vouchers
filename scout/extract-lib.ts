@@ -128,6 +128,9 @@ const clip = (line: string, around: number, max = 300): string => {
   return slice.replace(/^\S*\s/, '').replace(/\s\S*$/, '');
 };
 
+/** Site chrome that is never context for an offer. */
+const NAV_TEXT = /^(skip to (main )?content|menu|search|sign in|my account|basket|bag|wishlist|close|back|home|help)$/i;
+
 /** A filter or facet label with a result count, like "Up To 20% Off ( 676 )". */
 const FACET = /\(\s*\d[\d,]*\s*\)\s*$/;
 
@@ -152,7 +155,7 @@ export function extractOffers(html: string, pageUrl: string, today = new Date().
         if (prev && !(prev.confidence === 'medium' && confidence === 'high')) continue;
         const end = endDate(near, today);
         const count = occurrences(token);
-        const context = lines.slice(Math.max(0, i - 2), i + 3).filter((l) => l !== line);
+        const context = lines.slice(Math.max(0, i - 2), i + 3).filter((l) => l !== line && !NAV_TEXT.test(l));
         codes.set(token, {
           code: token,
           quote: clip(line, m.index!),
@@ -194,7 +197,9 @@ export function extractOffers(html: string, pageUrl: string, today = new Date().
 }
 
 /** Pages that look like offers but never are: products, gift cards, help and accounts. */
-const NOT_OFFER_PAGES = /\/p\/\d|\/product[s]?\/|\/dp\/|gift-?cards?|\/help\b|customer-?services?|\/faqs?\b|\/account|\/login|\/sign-?in|\/basket|\/cart|\/stores?\//i;
+const NOT_OFFER_PAGES = /\/p\/|\/product[s]?\/|\/dp\/|gift-?cards?|gift-?vouchers?|e-?vouchers?|\/help\b|customer-?services?|\/faqs?\b|\/account|\/login|\/sign-?in|\/basket|\/cart|\/stores?\//i;
+/** Promotion terms pages often live under /help but list codes and their dates: never skip those. */
+const PROMO_TERMS = /promo|promotion|offer-?terms|voucher-?codes?|discount-?codes?/i;
 
 /** Links on the same site that look like offers pages, best first, for the scout to open next. */
 export function offerLinks(html: string, pageUrl: string): { url: string; text: string }[] {
@@ -210,7 +215,8 @@ export function offerLinks(html: string, pageUrl: string): { url: string; text: 
       continue;
     }
     const sameSite = url.hostname.replace(/^www\./, '') === host || url.hostname.endsWith(`.${host}`);
-    if (!sameSite || !/^https?:$/.test(url.protocol) || NOT_OFFER_PAGES.test(url.pathname)) continue;
+    if (!sameSite || !/^https?:$/.test(url.protocol)) continue;
+    if (NOT_OFFER_PAGES.test(url.pathname) && !(PROMO_TERMS.test(url.pathname) && !/\/p\//.test(url.pathname))) continue;
     const hay = `${url.pathname} ${text}`.toLowerCase();
     let score = 0;
     if (/(coded-?promo|promo-?codes?|discount-?codes?|voucher|coupon)/.test(hay)) score = 3;
