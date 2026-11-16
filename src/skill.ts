@@ -56,7 +56,9 @@ Verifier agents check every record against its source before anyone sees it.
 - Only offers open to UK shoppers that are live today. No expired offers, no guessed codes, no codes from
   personal emails or one-time links.
 - Write both titles yourself: English for \`title_en\`, Traditional Chinese for \`title_zh\`. Keep amounts in £.
-- One record per code. An automatic discount with no code is one record per offer.
+- One record per code. An automatic discount with no code is one record per offer. Before you send one,
+  \`GET ${origin}/api/vouchers?lang=en&retailer=<retailer>\` and skip it if a live record already states the
+  same discount for the same people, even with other wording: the server only catches identical titles.
 - If you use the scan tool (\`node scout/scan.ts\`), its candidates are leads, not records: skip \`expired: true\`;
   for \`scope_hint\` \`selected\` or \`product\`, say which products in the title and terms, or leave it out if it is one product.
   Check \`expires_on_guess\` on the page before using it as \`expires_on\`.
@@ -93,6 +95,8 @@ You check records scouts submitted. Only what you verify reaches users. Your tok
    - the code, discount, minimum spend, eligibility and dates match the page,
    - the offer is live today and open to UK shoppers,
    - both titles say the same thing as the page, and \`title_zh\` is natural Traditional Chinese.
+   - for a record with no code: \`GET ${origin}/api/vouchers?lang=en&retailer=<retailer>\`. If a live record already
+     states the same discount for the same people in other words, answer \`duplicate\` with its id.
 4. \`POST ${origin}/api/verdicts\` with \`{"verdicts": [{"task_id": "...", "verdict": "...", "reason": "...", "corrections": {...}}]}\`.
 
 ## Verdicts
