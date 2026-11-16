@@ -9,11 +9,20 @@ const ENTITIES: Record<string, string> = {
   ndash: '-', mdash: '-', lsquo: "'", rsquo: "'", ldquo: '"', rdquo: '"', hellip: '…', copy: '©', reg: '®', trade: '™',
 };
 
+/** Entities decoded, twice, because some pages encode them twice ("&amp;#39;"). Case kept. */
+export function decodeEntities(value: string): string {
+  let out = value;
+  for (let i = 0; i < 2; i++) {
+    out = out
+      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number(dec)))
+      .replace(/&([a-z]+);/gi, (m, name: string) => ENTITIES[name.toLowerCase()] ?? m);
+  }
+  return out;
+}
+
 export function normalize(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number(dec)))
-    .replace(/&([a-z]+);/gi, (m, name: string) => ENTITIES[name.toLowerCase()] ?? m)
+  return decodeEntities(value)
     .replace(/[­​-‏⁠﻿]/g, '')
     .normalize('NFKC')
     .replace(/[‘’ʼ]/g, "'")

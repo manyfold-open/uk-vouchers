@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchPage } from '../src/fetch-page.ts';
-import { extractOffers, type Extraction } from './extract-lib.ts';
+import { extractOffers, type CodeCandidate, type Extraction, type OfferCandidate } from './extract-lib.ts';
 
 const args = process.argv.slice(2);
 const only = args.includes('--only') ? args[args.indexOf('--only') + 1].toLowerCase().split(',') : null;
@@ -29,8 +29,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const results: unknown[] = [];
 
 for (const retailer of chosen) {
-  const pages: ({ url: string; ok: true } & Omit<Extraction, 'offer_links'>)[] = [];
+  const pages: { url: string; codes: CodeCandidate[]; offers: OfferCandidate[] }[] = [];
   const failures: { url: string; reason: string }[] = [];
+  // Banners repeat on every page: keep each code and offer line once, where it was first seen.
+  const seenCodes = new Set<string>();
+  const seenOffers = new Set<string>();
+  const keep = (url: string, found: Extraction) => {
+    const codes = found.codes.filter((c) => !seenCodes.has(c.code) && seenCodes.add(c.code));
+    const offers = found.offers.filter((o) => !seenOffers.has(o.quote) && seenOffers.add(o.quote));
+    pages.push({ url, codes, offers });
+  };
   const home = await fetchPage(retailer.url);
   if (!home.ok) {
     failures.push({ url: retailer.url, reason: home.reason });
@@ -39,7 +47,7 @@ for (const retailer of chosen) {
     continue;
   }
   const first = extractOffers(home.html, home.url);
-  pages.push({ url: home.url, ok: true, codes: first.codes, offers: first.offers });
+  keep(home.url, first);
   for (const link of first.offer_links.slice(0, maxPages)) {
     await sleep(1000);
     const page = await fetchPage(link.url);
@@ -47,12 +55,15 @@ for (const retailer of chosen) {
       failures.push({ url: link.url, reason: page.reason });
       continue;
     }
-    const found = extractOffers(page.html, page.url);
-    pages.push({ url: page.url, ok: true, codes: found.codes, offers: found.offers });
+    keep(page.url, extractOffers(page.html, page.url));
   }
-  const codes = pages.reduce((n, p) => n + p.codes.length, 0);
+  const all = pages.flatMap((p) => p.codes);
+  const live = all.filter((c) => !c.expired).length;
   const offers = pages.reduce((n, p) => n + p.offers.length, 0);
-  console.error(`✓ ${retailer.name}: ${pages.length} pages, ${codes} codes, ${offers} offer lines${failures.length ? `, ${failures.length} failed` : ''}`);
+  console.error(
+    `✓ ${retailer.name}: ${pages.length} pages, ${live} codes${all.length > live ? ` (+${all.length - live} expired)` : ''}, ${offers} offer lines` +
+      (failures.length ? `, ${failures.length} failed (${[...new Set(failures.map((f) => f.reason))].join('; ')})` : ''),
+  );
   results.push({ retailer, pages, failures });
   await sleep(1000);
 }

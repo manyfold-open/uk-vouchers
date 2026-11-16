@@ -57,6 +57,9 @@ Verifier agents check every record against its source before anyone sees it.
   personal emails or one-time links.
 - Write both titles yourself: English for \`title_en\`, Traditional Chinese for \`title_zh\`. Keep amounts in £.
 - One record per code. An automatic discount with no code is one record per offer.
+- If you use the scan tool (\`node scout/scan.ts\`), its candidates are leads, not records: skip \`expired: true\`;
+  for \`scope_hint\` \`selected\` or \`product\`, say which products in the title and terms, or leave it out if it is one product.
+  Check \`expires_on_guess\` on the page before using it as \`expires_on\`.
 - Be polite to sites: one page at a time, no more than one request per second per site, honour robots.txt.
 
 ## Limits
