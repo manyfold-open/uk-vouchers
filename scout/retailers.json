@@ -255,6 +255,356 @@
    "name": "Mamas & Papas",
    "url": "https://www.mamasandpapas.com",
    "category": "kids"
+  },
+  {
+   "name": "Lush UK",
+   "url": "https://www.lush.com/uk/en",
+   "category": "beauty"
+  },
+  {
+   "name": "Elemis",
+   "url": "https://uk.elemis.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Liz Earle",
+   "url": "https://www.lizearle.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Molton Brown",
+   "url": "https://www.moltonbrown.co.uk",
+   "category": "beauty"
+  },
+  {
+   "name": "Beauty Bay",
+   "url": "https://www.beautybay.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Rituals UK",
+   "url": "https://www.rituals.com/en-gb",
+   "category": "beauty"
+  },
+  {
+   "name": "H&M UK",
+   "url": "https://www2.hm.com/en_gb",
+   "category": "fashion"
+  },
+  {
+   "name": "Monsoon",
+   "url": "https://uk.monsoon.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Joules",
+   "url": "https://www.joules.com",
+   "category": "fashion"
+  },
+  {
+   "name": "FatFace",
+   "url": "https://www.fatface.com",
+   "category": "fashion"
+  },
+  {
+   "name": "White Stuff",
+   "url": "https://www.whitestuff.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Seasalt Cornwall",
+   "url": "https://www.seasaltcornwall.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Boden UK",
+   "url": "https://www.boden.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Nasty Gal UK",
+   "url": "https://www.nastygal.com/gb",
+   "category": "fashion"
+  },
+  {
+   "name": "In The Style",
+   "url": "https://www.inthestyle.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Quiz Clothing",
+   "url": "https://www.quizclothing.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Superdry UK",
+   "url": "https://www.superdry.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Schuh",
+   "url": "https://www.schuh.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Clarks UK",
+   "url": "https://www.clarks.com/en-gb",
+   "category": "fashion"
+  },
+  {
+   "name": "Office Shoes",
+   "url": "https://www.office.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Levi's UK",
+   "url": "https://www.levi.com/GB/en_GB",
+   "category": "fashion"
+  },
+  {
+   "name": "Hollister UK",
+   "url": "https://www.hollisterco.com/shop/uk",
+   "category": "fashion"
+  },
+  {
+   "name": "TK Maxx UK",
+   "url": "https://www.tkmaxx.com/uk/en",
+   "category": "fashion"
+  },
+  {
+   "name": "Net-a-Porter UK",
+   "url": "https://www.net-a-porter.com/en-gb",
+   "category": "luxury"
+  },
+  {
+   "name": "Mr Porter UK",
+   "url": "https://www.mrporter.com/en-gb",
+   "category": "luxury"
+  },
+  {
+   "name": "Liberty London",
+   "url": "https://www.libertylondon.com/uk",
+   "category": "luxury"
+  },
+  {
+   "name": "Morrisons",
+   "url": "https://groceries.morrisons.com",
+   "category": "grocery"
+  },
+  {
+   "name": "Iceland",
+   "url": "https://www.iceland.co.uk",
+   "category": "grocery"
+  },
+  {
+   "name": "Gousto",
+   "url": "https://www.gousto.co.uk",
+   "category": "grocery"
+  },
+  {
+   "name": "HelloFresh UK",
+   "url": "https://www.hellofresh.co.uk",
+   "category": "grocery"
+  },
+  {
+   "name": "Abel & Cole",
+   "url": "https://www.abelandcole.co.uk",
+   "category": "grocery"
+  },
+  {
+   "name": "Habitat",
+   "url": "https://www.habitat.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "Oak Furnitureland",
+   "url": "https://www.oakfurnitureland.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "Furniture Village",
+   "url": "https://www.furniturevillage.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "Robert Dyas",
+   "url": "https://www.robertdyas.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "B&Q",
+   "url": "https://www.diy.com",
+   "category": "home"
+  },
+  {
+   "name": "Wickes",
+   "url": "https://www.wickes.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "Lakeland",
+   "url": "https://www.lakeland.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "Very",
+   "url": "https://www.very.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Box.co.uk",
+   "url": "https://www.box.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Laptops Direct",
+   "url": "https://www.laptopsdirect.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Ebuyer",
+   "url": "https://www.ebuyer.com",
+   "category": "electronics"
+  },
+  {
+   "name": "Dell UK",
+   "url": "https://www.dell.com/en-uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Lenovo UK",
+   "url": "https://www.lenovo.com/gb/en",
+   "category": "electronics"
+  },
+  {
+   "name": "Holland & Barrett",
+   "url": "https://www.hollandandbarrett.com",
+   "category": "health"
+  },
+  {
+   "name": "Myprotein UK",
+   "url": "https://www.myprotein.com",
+   "category": "health"
+  },
+  {
+   "name": "Chemist4U",
+   "url": "https://www.chemist4u.com",
+   "category": "health"
+  },
+  {
+   "name": "National Express",
+   "url": "https://www.nationalexpress.com",
+   "category": "travel"
+  },
+  {
+   "name": "Megabus UK",
+   "url": "https://uk.megabus.com",
+   "category": "travel"
+  },
+  {
+   "name": "Hotels.com UK",
+   "url": "https://uk.hotels.com",
+   "category": "travel"
+  },
+  {
+   "name": "Domino's UK",
+   "url": "https://www.dominos.co.uk",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Pizza Hut UK",
+   "url": "https://www.pizzahut.co.uk",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Papa John's UK",
+   "url": "https://www.papajohns.co.uk",
+   "category": "food-delivery"
+  },
+  {
+   "name": "Smyths Toys",
+   "url": "https://www.smythstoys.com/uk/en-gb",
+   "category": "kids"
+  },
+  {
+   "name": "The Entertainer",
+   "url": "https://www.thetoyshop.com",
+   "category": "kids"
+  },
+  {
+   "name": "JoJo Maman Bébé",
+   "url": "https://www.jojomamanbebe.co.uk",
+   "category": "kids"
+  },
+  {
+   "name": "Hamleys",
+   "url": "https://www.hamleys.com",
+   "category": "kids"
+  },
+  {
+   "name": "Decathlon UK",
+   "url": "https://www.decathlon.co.uk",
+   "category": "sports"
+  },
+  {
+   "name": "Gymshark UK",
+   "url": "https://uk.gymshark.com",
+   "category": "sports"
+  },
+  {
+   "name": "Sweaty Betty",
+   "url": "https://www.sweatybetty.com",
+   "category": "sports"
+  },
+  {
+   "name": "Footasylum",
+   "url": "https://www.footasylum.com",
+   "category": "sports"
+  },
+  {
+   "name": "Go Outdoors",
+   "url": "https://www.gooutdoors.co.uk",
+   "category": "sports"
+  },
+  {
+   "name": "Zooplus UK",
+   "url": "https://www.zooplus.co.uk",
+   "category": "pets"
+  },
+  {
+   "name": "Butternut Box",
+   "url": "https://butternutbox.com",
+   "category": "pets"
+  },
+  {
+   "name": "Tails.com",
+   "url": "https://tails.com/gb",
+   "category": "pets"
+  },
+  {
+   "name": "Moonpig",
+   "url": "https://www.moonpig.com/uk",
+   "category": "other"
+  },
+  {
+   "name": "Waterstones",
+   "url": "https://www.waterstones.com",
+   "category": "other"
+  },
+  {
+   "name": "Hobbycraft",
+   "url": "https://www.hobbycraft.co.uk",
+   "category": "other"
+  },
+  {
+   "name": "The Works",
+   "url": "https://www.theworks.co.uk",
+   "category": "other"
+  },
+  {
+   "name": "Photobox",
+   "url": "https://www.photobox.co.uk",
+   "category": "other"
   }
  ]
 }
