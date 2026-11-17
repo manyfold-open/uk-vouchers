@@ -42,7 +42,7 @@ Node 22.18+.
 
 ```bash
 npm install
-npm test                         # 20 tests: API flow + extractor
+npm test                         # API flow, public reads, dedupe, extractor
 cp .dev.vars.example .dev.vars   # set ADMIN_PASSWORD
 npx wrangler d1 create uk-vouchers-db   # put the id in wrangler.jsonc
 npm run dev                      # http://localhost:8787
@@ -71,8 +71,9 @@ curl -X POST <your-worker>/api/admin/tokens -H "x-admin-password: $ADMIN_PASSWOR
 | `GET /api/me` | token | role and standing |
 | `POST /api/records` | scout | up to 20 records |
 | `GET /api/tasks`, `POST /api/verdicts` | verifier | lease 10 tasks for 30 min; verdicts |
-| `GET /api/vouchers?lang=zh&category=beauty&retailer=boots&q=` | anyone | verified vouchers |
-| `GET /api/vouchers/:id`, `GET /export.json` | anyone | one voucher; everything (CC BY 4.0) |
+| `GET /api/vouchers?lang=zh&sort=best&category=beauty&eligibility=&retailer=boots&q=&limit=&page=` | anyone | live verified vouchers; `sort` is `best`, `newest` (default) or `ending`; a bad filter value is a 400 |
+| `GET /api/meta` | anyone | allowed `category` / `eligibility` / `sort` values with Chinese labels |
+| `GET /api/vouchers/:id`, `GET /export.json` | anyone | one voucher; everything (CC BY 4.0). Public reads allow any origin (CORS) and are cacheable for 60 s; offers past `expires_on` never show |
 | `POST /api/admin/tokens`, `GET /api/admin/overview`, `POST /api/admin/maintenance` | admin | `x-admin-password` |
 | `GET /api/admin/tokens`, `POST /api/admin/tokens/:id` | admin | list tokens; `{"status": "active"\|"suspended"\|"revoked"}` changes one and frees the tasks it holds |
 | `POST /api/admin/records/:id` | admin | `{"action": "verified"\|"rejected"\|"expired", "reason": "…", "corrections": {…}}`: settle a review item or fix / take down a public record |

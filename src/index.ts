@@ -4,6 +4,7 @@
  */
 
 import { Hono, type Context } from 'hono';
+import { cors } from 'hono/cors';
 import watchlist from '../scout/retailers.json' with { type: 'json' };
 import { ensureSchema } from './schema.ts';
 import { scoutSkill, verifierSkill } from './skill.ts';
@@ -11,7 +12,8 @@ import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
 import { adminDecide, applyVerdicts, leaseTasks, maintenance } from './verify.ts';
-import { LABELS_ZH, type Voucher } from './voucher.ts';
+import { compare, isLive, matches, meta, parseLang, parseListQuery, publicVoucher, type PublicRow } from './public.ts';
+import type { Voucher } from './voucher.ts';
 
 export interface Env {
   DB: D1Database;
@@ -100,42 +102,46 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
   });
 
   // ---- Public reads (what the Narra agent uses) ----
+  // Anyone may read from any origin, and edges may cache for a minute.
+  const PUBLIC_ROW = 'SELECT id, data_json, source_url, evidence, verification_level, verified_at FROM vouchers';
+  type Row = { id: string; data_json: string; source_url: string; evidence: string; verification_level: string; verified_at: string };
+  const toPublic = (r: Row): PublicRow => ({ ...r, data: JSON.parse(r.data_json) as Voucher });
+  const liveRows = async (c: AppContext) => {
+    const { results } = await c.env.DB.prepare(`${PUBLIC_ROW} WHERE status = 'verified'`).all<Row>();
+    const at = now();
+    return results.map(toPublic).filter((r) => isLive(r.data, at));
+  };
+  for (const path of ['/api/vouchers', '/api/vouchers/*', '/api/meta', '/export.json']) {
+    app.use(path, cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'] }));
+    app.use(path, async (c, next) => {
+      await next();
+      if (c.req.method === 'GET' && c.res.status === 200) c.header('cache-control', 'public, max-age=60');
+    });
+  }
+
+  app.get('/api/meta', (c) => c.json(meta()));
+
   app.get('/api/vouchers', async (c) => {
-    const q = c.req.query();
-    const lang = q.lang === 'zh' ? 'zh' : 'en';
-    const { results } = await c.env.DB
-      .prepare("SELECT id, data_json, source_url, evidence, verification_level, verified_at FROM vouchers WHERE status = 'verified' ORDER BY verified_at DESC")
-      .all<{ id: string; data_json: string; source_url: string; evidence: string; verification_level: string; verified_at: string }>();
-    const text = (q.q ?? '').toLowerCase();
-    const rows = results
-      .map((r) => ({ ...r, data: JSON.parse(r.data_json) as Voucher }))
-      .filter((r) => !q.retailer || r.data.retailer.toLowerCase().includes(q.retailer.toLowerCase()) || r.data.retailer_url.includes(q.retailer.toLowerCase()))
-      .filter((r) => !q.category || r.data.category === q.category)
-      .filter((r) => !q.eligibility || r.data.eligibility === q.eligibility)
-      .filter((r) => !text || [r.data.retailer, r.data.title_en, r.data.title_zh, r.data.code ?? ''].join(' ').toLowerCase().includes(text));
-    const limit = Math.min(100, Math.max(1, Number(q.limit) || 20));
-    const page = Math.max(1, Number(q.page) || 1);
+    const q = parseListQuery(c.req.query());
+    const rows = (await liveRows(c)).filter((r) => matches(r, q)).sort(compare(q.sort));
     return c.json({
       total: rows.length,
-      page,
-      vouchers: rows.slice((page - 1) * limit, page * limit).map((r) => publicVoucher(r, lang)),
+      page: q.page,
+      sort: q.sort,
+      vouchers: rows.slice((q.page - 1) * q.limit, q.page * q.limit).map((r) => publicVoucher(r, q.lang)),
     });
   });
 
   app.get('/api/vouchers/:id', async (c) => {
-    const row = await c.env.DB
-      .prepare("SELECT id, data_json, source_url, evidence, verification_level, verified_at FROM vouchers WHERE id = ? AND status = 'verified'")
-      .bind(c.req.param('id'))
-      .first<{ id: string; data_json: string; source_url: string; evidence: string; verification_level: string; verified_at: string }>();
-    if (!row) throw new HttpError(404, 'No public voucher has this id.');
-    return c.json(publicVoucher({ ...row, data: JSON.parse(row.data_json) }, c.req.query('lang') === 'zh' ? 'zh' : 'en'));
+    const row = await c.env.DB.prepare(`${PUBLIC_ROW} WHERE id = ? AND status = 'verified'`).bind(c.req.param('id')).first<Row>();
+    const r = row && toPublic(row);
+    if (!r || !isLive(r.data, now())) throw new HttpError(404, 'No public voucher has this id.');
+    return c.json(publicVoucher(r, parseLang(c.req.query('lang'))));
   });
 
   app.get('/export.json', async (c) => {
-    const { results } = await c.env.DB
-      .prepare("SELECT id, data_json, source_url, evidence, verification_level, verified_at FROM vouchers WHERE status = 'verified' ORDER BY verified_at DESC")
-      .all<{ id: string; data_json: string; source_url: string; evidence: string; verification_level: string; verified_at: string }>();
-    return c.json({ license: 'CC-BY-4.0', vouchers: results.map((r) => publicVoucher({ ...r, data: JSON.parse(r.data_json) }, 'en')) });
+    const rows = (await liveRows(c)).sort(compare('newest'));
+    return c.json({ license: 'CC-BY-4.0', vouchers: rows.map((r) => publicVoucher(r, 'en')) });
   });
 
   // ---- Admin ----
@@ -199,36 +205,6 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
   });
 
   return app;
-}
-
-function publicVoucher(
-  r: { id: string; data: Voucher; source_url: string; evidence: string; verification_level: string; verified_at: string },
-  lang: 'en' | 'zh',
-) {
-  const d = r.data;
-  return {
-    id: r.id,
-    retailer: d.retailer,
-    title: lang === 'zh' ? d.title_zh : d.title_en,
-    title_en: d.title_en,
-    title_zh: d.title_zh,
-    code: d.code,
-    discount_type: d.discount_type,
-    discount_value: d.discount_value,
-    min_spend_gbp: d.min_spend_gbp,
-    category: d.category,
-    category_zh: LABELS_ZH[d.category],
-    eligibility: d.eligibility,
-    eligibility_zh: LABELS_ZH[d.eligibility],
-    starts_on: d.starts_on,
-    expires_on: d.expires_on,
-    offer_url: d.offer_url,
-    terms: lang === 'zh' ? d.terms_zh ?? d.terms_en : d.terms_en,
-    verification_level: r.verification_level,
-    last_checked_at: r.verified_at,
-    source_url: r.source_url,
-    evidence: r.evidence,
-  };
 }
 
 const app = createApp();
