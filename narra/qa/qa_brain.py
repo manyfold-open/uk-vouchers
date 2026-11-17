@@ -61,6 +61,17 @@ CASES = [
     ('更多', [], dict(lang='zh')),
     ('我的訂閱', [], dict(lang='zh', kind='text')),
     ('Boots 有新的通知我', [], dict(lang='zh', kind='text', must='Boots')),
+    ('Boots 7 折以下才通知我', [], dict(lang='zh', kind='text', must='省 30%')),
+    ('notify me about Boots 30% off or more', [], dict(lang='en', kind='text', must='30%\\+')),
+    ('開啟週報', [], dict(lang='zh', kind='text', must='每週一')),
+    ('weekly digest on', [], dict(lang='en', kind='text', must='Monday')),
+    ('關閉週報', [], dict(lang='zh', kind='text', must='已關閉')),
+    ('大促提醒我', [], dict(lang='zh', kind='text', must='黑色星期五')),
+    ('關閉大促提醒', [], dict(lang='zh', kind='text', must='已關閉')),
+    ('我是學生', [], dict(lang='zh', kind='offers', must='通知你嗎')),
+    ("I'm a student", [], dict(lang='en', kind='offers', must='DM')),
+    ('停止通知', [], dict(lang='zh', kind='text', must='取消')),
+    ('提醒我 Black Friday', [], dict(lang='zh', kind='text', must='黑色星期五')),
 ]
 
 async def main():

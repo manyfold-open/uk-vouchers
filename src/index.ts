@@ -159,7 +159,8 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
 
   app.get('/export.json', async (c) => {
     const rows = (await liveRows(c)).sort(compare('newest'));
-    return c.json({ license: 'CC-BY-4.0', vouchers: rows.map((r) => publicVoucher(r, 'en')) });
+    const reports = await reportCounts(c.env.DB, now());
+    return c.json({ license: 'CC-BY-4.0', vouchers: rows.map((r) => publicVoucher(r, 'en', reports.get(r.id) ?? 0)) });
   });
 
   // ---- Admin ----

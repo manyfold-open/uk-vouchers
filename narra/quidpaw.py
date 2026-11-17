@@ -264,15 +264,25 @@ class Brain:
                 out['text'] = subs_text(ctx.get('subs') or [], zh); return out
             if YES.match(t) and ctx.get('pending'):
                 return self._subscribe(out, ctx['pending'], zh, group)
-            if REPORT.search(t) and (ctx.get('replied') or (ctx.get('last') or {}).get('offers')):
-                return self._report(out, t, ctx, zh)
             last = ctx.get('last') or {}
-            if MORE.match(t) and last.get('query') is not None:
-                return await self._search(out, last['query'], lang, zh, group, ctx, page=last.get('page', 1) + 1)
+            listed = ctx.get('replied') or last.get('offers')
+            if REPORT.search(t):
+                if listed:
+                    return self._report(out, t, ctx, zh)
+                if pick(t, [{}] * 5):  # "第 2 個不能用" with no list on screen
+                    out['text'] = say('我這裡還沒有給你看過清單 🐾 請回覆那則優惠訊息，或告訴我是哪家店的哪個碼。',
+                                      "I haven't shown you a list yet 🐾 Reply to the offer message, or tell me the shop and code."); return out
+            if MORE.match(t):
+                if last.get('query') is not None:
+                    return await self._search(out, last['query'], lang, zh, group, ctx, page=last.get('page', 1) + 1)
+                return await self._search(out, {}, lang, zh, group, ctx)  # nothing to continue: the best ones
             if SUBSCRIBE.search(t):
                 if group:
                     out['text'] = say('通知是個人的，請私訊我說「Boots 有新的通知我」🐾', 'Alerts are personal: DM me "notify me about Boots" 🐾'); return out
-                picked = pick(t, ctx.get('replied') or last.get('offers') or [])
+                picked = pick(t, listed or [])
+                if not picked and pick(t, [{}] * 5):
+                    out['text'] = say('我這裡還沒有給你看過清單 🐾 先問我商店或類別，再說「收藏第 1 個」。',
+                                      "I haven't shown you a list yet 🐾 Ask for a shop or category first, then say \"save number 1\"."); return out
                 if picked:
                     for v in picked:
                         self_sub = {'kind': 'offer', 'value': v['id'], 'label': f"{v['retailer']}｜{v.get('title', '')}"[:80], 'expires_on': v.get('expires_on'),
@@ -399,7 +409,7 @@ SALES_OFF = re.compile(r'(關閉|取消|不要|停止)\s*(大促|發薪|節日)|
 MORE = re.compile(r'^\s*(更多|再來|再多一點|下一頁|還有嗎|還有呢|還有其他嗎|more|next|show more|any more)[\s!！。.~?？]*$', re.I)
 REPORT = re.compile(r'不能用|用不了|沒辦法用|沒用|失效|無效|不行用|沒效|過期了|碼錯|doesn.?t work|didn.?t work|not working|invalid|expired|wrong code', re.I)
 SUBSCRIBE = re.compile(r'通知我|提醒我|訂閱|收藏|存起來|有新的?.{0,6}(告訴|通知|跟我說)|notify me|alert me|let me know|remind me|subscribe|save (it|this|that|number)', re.I)
-UNSUB = re.compile(r'取消訂閱|取消通知|停止通知|不要(再)?通知|別(再)?通知|關閉通知|unsubscribe|stop (alerts|notifications|notifying)|no more alerts', re.I)
+UNSUB = re.compile(r'(取消|停止|關閉|不要再?|別再?).{0,20}(通知|訂閱|提醒)|unsubscribe|stop (\S+ )?(alerts|notifications|notifying)|no more alerts', re.I)
 MYSUBS = re.compile(r'我的訂閱|我的通知|訂閱了(什麼|哪些)|my (alerts|subscriptions)', re.I)
 YES = re.compile(r'^\s*(好|好啊|好喔|好的|要|要啊|可以|嗯嗯?|麻煩了|yes|yeah|yep|ok|okay|sure|y|please)[\s!！。.~]*$', re.I)
 IDENTITY = [(re.compile(r'我不是學生|i.?m not a student', re.I), None),

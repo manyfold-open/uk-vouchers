@@ -65,6 +65,7 @@ describe('reports', () => {
     const tasks = await db.prepare("SELECT kind, note FROM tasks WHERE voucher_id = 'v_1'").all<{ kind: string; note: string }>();
     expect(tasks.results).toEqual([{ kind: 'recheck', note: 'shopper report: code expired at checkout' }]);
     expect((await call('GET', '/api/vouchers')).body.vouchers[0].reports_7d).toBe(3);
+    expect((await call('GET', '/export.json')).body.vouchers[0].reports_7d).toBe(3);
   });
 
   it('refuses reports on vouchers that are not public', async () => {
