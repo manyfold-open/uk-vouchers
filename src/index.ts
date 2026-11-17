@@ -12,6 +12,7 @@ import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
 import { adminDecide, applyVerdicts, leaseTasks, maintenance } from './verify.ts';
+import { recordDemand, REPORT_WARNING, reportCounts, reportCount, reportVoucher, unmetDemand } from './signals.ts';
 import { compare, isLive, matches, meta, parseLang, parseListQuery, positiveInt, publicVoucher, type PublicRow } from './public.ts';
 import type { Voucher } from './voucher.ts';
 
@@ -113,8 +114,8 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
     const at = now();
     return results.map(toPublic).filter((r) => isLive(r.data, at));
   };
-  for (const path of ['/api/vouchers', '/api/vouchers/*', '/api/meta', '/export.json']) {
-    app.use(path, cors({ origin: '*', allowMethods: ['GET', 'OPTIONS'] }));
+  for (const path of ['/api/vouchers', '/api/vouchers/*', '/api/meta', '/api/demand', '/export.json']) {
+    app.use(path, cors({ origin: '*', allowMethods: ['GET', 'POST', 'OPTIONS'] }));
     app.use(path, async (c, next) => {
       await next();
       if (c.req.method === 'GET' && c.res.status === 200) c.header('cache-control', 'public, max-age=60');
@@ -126,11 +127,12 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
   app.get('/api/vouchers', async (c) => {
     const q = parseListQuery(c.req.query());
     const rows = (await liveRows(c)).filter((r) => matches(r, q)).sort(compare(q.sort));
+    const reports = await reportCounts(c.env.DB, now());
     return c.json({
       total: rows.length,
       page: q.page,
       sort: q.sort,
-      vouchers: rows.slice((q.page - 1) * q.limit, q.page * q.limit).map((r) => publicVoucher(r, q.lang)),
+      vouchers: rows.slice((q.page - 1) * q.limit, q.page * q.limit).map((r) => publicVoucher(r, q.lang, reports.get(r.id) ?? 0)),
     });
   });
 
@@ -138,7 +140,21 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
     const row = await c.env.DB.prepare(`${PUBLIC_ROW} WHERE id = ? AND status = 'verified'`).bind(c.req.param('id')).first<Row>();
     const r = row && toPublic(row);
     if (!r || !isLive(r.data, now())) throw new HttpError(404, 'No public voucher has this id.');
-    return c.json(publicVoucher(r, parseLang(c.req.query('lang'))));
+    return c.json(publicVoucher(r, parseLang(c.req.query('lang')), await reportCount(c.env.DB, r.id, now())));
+  });
+
+  // ---- Shopper signals (what the Narra agent sends back) ----
+  const ip = (c: AppContext) => c.req.header('cf-connecting-ip') ?? 'local';
+  // A search that found nothing: scouts read GET /api/demand to know what to look for next.
+  app.post('/api/demand', async (c) => {
+    await recordDemand(c.env.DB, (await json(c)) as Record<string, unknown>, ip(c), now());
+    return c.body(null, 204);
+  });
+  app.get('/api/demand', async (c) => c.json(await unmetDemand(c.env.DB, Math.min(30, positiveInt(c.req.query('days')) ?? 7), now())));
+  // "This code didn't work": queues a recheck; after REPORT_WARNING reporters the voucher shows a warning.
+  app.post('/api/vouchers/:id/report', async (c) => {
+    const result = await reportVoucher(c.env.DB, c.req.param('id'), (await json(c)) as Record<string, unknown>, ip(c), now());
+    return c.json({ ...result, warning: result.reports_7d >= REPORT_WARNING });
   });
 
   app.get('/export.json', async (c) => {

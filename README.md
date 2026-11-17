@@ -74,6 +74,8 @@ curl -X POST <your-worker>/api/admin/tokens -H "x-admin-password: $ADMIN_PASSWOR
 | `GET /api/vouchers?lang=zh&sort=best&category=beauty&eligibility=&retailer=boots&q=&limit=&page=` | anyone | live verified vouchers; `sort` is `best`, `newest` (default) or `ending`; filter values are case-insensitive, an unknown one is a 400; `q` also matches the partner scheme (e.g. `unidays`) |
 | `GET /api/meta` | anyone | allowed `category` / `eligibility` / `sort` values with Chinese labels |
 | `GET /api/vouchers/:id`, `GET /export.json` | anyone | one voucher; everything (CC BY 4.0). Public reads allow any origin (CORS) and are cacheable for 60 s; offers past `expires_on` never show |
+| `POST /api/demand`, `GET /api/demand?days=7` | anyone, 120/IP/hour | a chat search that found nothing; scouts read the most-asked unmet searches |
+| `POST /api/vouchers/:id/report` | anyone, 20/IP/hour | "this code didn't work": queues a recheck; 3 reporters in 7 days add a warning (`reports_7d`) |
 | `POST /api/admin/tokens`, `GET /api/admin/overview`, `POST /api/admin/maintenance` | admin | `x-admin-password` |
 | `GET /api/admin/tokens`, `POST /api/admin/tokens/:id` | admin | list tokens; `{"status": "active"\|"suspended"\|"revoked"}` changes one and frees the tasks it holds |
 | `POST /api/admin/records/:id` | admin | `{"action": "verified"\|"rejected"\|"expired", "reason": "…", "corrections": {…}}`: settle a review item or fix / take down a public record |

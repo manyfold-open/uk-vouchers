@@ -128,7 +128,7 @@ export function compare(sort: Sort): (a: PublicRow, b: PublicRow) => number {
     newest(a, b);
 }
 
-export function publicVoucher(r: PublicRow, lang: Lang) {
+export function publicVoucher(r: PublicRow, lang: Lang, reports7d = 0) {
   const d = r.data;
   return {
     id: r.id,
@@ -155,6 +155,8 @@ export function publicVoucher(r: PublicRow, lang: Lang) {
     via: schemeName(r.source_url),
     verification_level: r.verification_level,
     last_checked_at: r.verified_at,
+    // Shoppers who said the offer did not work in the last 7 days (a recheck is already queued).
+    reports_7d: reports7d,
     source_url: r.source_url,
     evidence: r.evidence,
   };

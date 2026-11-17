@@ -6,6 +6,8 @@
  * ensureSchema adds those columns before it creates the indexes that use them.
  */
 
+import { SIGNALS_SCHEMA } from './signals.ts';
+
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS vouchers (
   id                 TEXT PRIMARY KEY,
@@ -80,8 +82,10 @@ CREATE TABLE IF NOT EXISTS join_log (
 CREATE INDEX IF NOT EXISTS join_log_ip ON join_log (ip, created_at);
 `;
 
-export const schemaStatements = (): string[] =>
-  SCHEMA.split(';').map((s) => s.trim()).filter(Boolean);
+export const schemaStatements = (): string[] => [
+  ...SCHEMA.split(';').map((s) => s.trim()).filter(Boolean),
+  ...SIGNALS_SCHEMA,
+];
 
 /** Columns added after a table was first created: [table, column, type]. Never remove an entry. */
 export const ADDED_COLUMNS: readonly [string, string, string][] = [['vouchers', 'quote_checked_at', 'TEXT']];
