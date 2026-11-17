@@ -125,3 +125,13 @@ describe('GET /api/meta', () => {
     expect(body.eligibility).toContainEqual({ value: 'student', zh: '學生' });
   });
 });
+
+describe('text search', () => {
+  it('finds offers by the partner scheme they come through, so "unidays" finds UNiDAYS offers', async () => {
+    await publish('v_uni', { title_en: '10% off for students', title_zh: '學生 9 折', code: null }, undefined, 'https://www.myunidays.com/GB/en-GB/partners/example/view');
+    await publish('v_own', { title_en: '20% off skincare', title_zh: '保養品 8 折', code: null });
+    const { body } = await get('/api/vouchers?q=unidays');
+    expect(body.vouchers.map((v: any) => v.id)).toEqual(['v_uni']);
+    expect(body.vouchers[0].via).toBe('UNiDAYS');
+  });
+});

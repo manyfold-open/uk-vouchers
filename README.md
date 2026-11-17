@@ -71,7 +71,7 @@ curl -X POST <your-worker>/api/admin/tokens -H "x-admin-password: $ADMIN_PASSWOR
 | `GET /api/me` | token | role and standing |
 | `POST /api/records` | scout | up to 20 records |
 | `GET /api/tasks`, `POST /api/verdicts` | verifier | lease 10 tasks for 30 min; verdicts |
-| `GET /api/vouchers?lang=zh&sort=best&category=beauty&eligibility=&retailer=boots&q=&limit=&page=` | anyone | live verified vouchers; `sort` is `best`, `newest` (default) or `ending`; a bad filter value is a 400 |
+| `GET /api/vouchers?lang=zh&sort=best&category=beauty&eligibility=&retailer=boots&q=&limit=&page=` | anyone | live verified vouchers; `sort` is `best`, `newest` (default) or `ending`; filter values are case-insensitive, an unknown one is a 400; `q` also matches the partner scheme (e.g. `unidays`) |
 | `GET /api/meta` | anyone | allowed `category` / `eligibility` / `sort` values with Chinese labels |
 | `GET /api/vouchers/:id`, `GET /export.json` | anyone | one voucher; everything (CC BY 4.0). Public reads allow any origin (CORS) and are cacheable for 60 s; offers past `expires_on` never show |
 | `POST /api/admin/tokens`, `GET /api/admin/overview`, `POST /api/admin/maintenance` | admin | `x-admin-password` |

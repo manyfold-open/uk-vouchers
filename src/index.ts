@@ -12,7 +12,7 @@ import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
 import { adminDecide, applyVerdicts, leaseTasks, maintenance } from './verify.ts';
-import { compare, isLive, matches, meta, parseLang, parseListQuery, publicVoucher, type PublicRow } from './public.ts';
+import { compare, isLive, matches, meta, parseLang, parseListQuery, positiveInt, publicVoucher, type PublicRow } from './public.ts';
 import type { Voucher } from './voucher.ts';
 
 export interface Env {
@@ -31,6 +31,8 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
     await ensureSchema(c.env.DB);
     await next();
   });
+
+  app.notFound((c) => c.json({ error: 'No such route. Public reads: GET /api/vouchers, /api/meta; agents: /skill/scout.md, /skill/verifier.md.' }, 404));
 
   app.onError((error, c) => {
     if (error instanceof HttpError) return c.json({ error: error.message }, error.status);
@@ -93,7 +95,7 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
   // ---- Verifiers ----
   app.get('/api/tasks', async (c) => {
     const token = await authenticate(c.env.DB, c.req.header('authorization'), ['verifier']);
-    return c.json({ tasks: await leaseTasks(c.env.DB, token, Number(c.req.query('limit') ?? 10), now()) });
+    return c.json({ tasks: await leaseTasks(c.env.DB, token, positiveInt(c.req.query('limit')) ?? 10, now()) });
   });
 
   app.post('/api/verdicts', async (c) => {

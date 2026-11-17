@@ -32,6 +32,12 @@ const SCHEME_NAMES: Record<string, string> = {
   'nhsdiscounts.org.uk': 'NHS Discounts',
 };
 
+/** The partner scheme a record was read on ("UNiDAYS"), or null for the retailer's own site. */
+export function schemeName(sourceUrl: string): string | null {
+  const scheme = PARTNER_SOURCES.find((p) => sameSite(hostOf(sourceUrl), p));
+  return scheme ? SCHEME_NAMES[scheme] ?? scheme : null;
+}
+
 export interface ListQuery {
   lang: Lang;
   sort: Sort;
@@ -43,11 +49,19 @@ export interface ListQuery {
   page: number;
 }
 
-function oneOf(name: string, value: string | undefined, allowed: readonly string[]): string {
+function oneOf(name: string, raw: string | undefined, allowed: readonly string[]): string {
+  // Agents often send "Beauty" or " student": read filters case-insensitively.
+  const value = (raw ?? '').trim().toLowerCase();
   if (!value) return '';
   if (!allowed.includes(value)) throw new HttpError(400, `${name} must be one of: ${allowed.join(', ')}. See /api/meta.`);
   return value;
 }
+
+/** A whole number of 1 or more, or null for anything else ("0", "-5", "abc"), so the default applies. */
+export const positiveInt = (value: string | undefined): number | null => {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : null;
+};
 
 /** Reads the list query. Unknown category, eligibility or sort values are a 400, not an empty list. */
 export function parseListQuery(q: Record<string, string>): ListQuery {
@@ -58,8 +72,8 @@ export function parseListQuery(q: Record<string, string>): ListQuery {
     category: oneOf('category', q.category, CATEGORIES),
     eligibility: oneOf('eligibility', q.eligibility, ELIGIBILITY),
     text: (q.q ?? '').trim().toLowerCase(),
-    limit: Math.min(100, Math.max(1, Math.floor(Number(q.limit)) || 20)),
-    page: Math.max(1, Math.floor(Number(q.page)) || 1),
+    limit: Math.min(100, positiveInt(q.limit) ?? 20),
+    page: positiveInt(q.page) ?? 1,
   };
 }
 
@@ -71,7 +85,7 @@ export function matches(r: PublicRow, q: ListQuery): boolean {
   if (q.retailer && !d.retailer.toLowerCase().includes(q.retailer) && !d.retailer_url.toLowerCase().includes(q.retailer)) return false;
   if (q.category && d.category !== q.category) return false;
   if (q.eligibility && d.eligibility !== q.eligibility) return false;
-  if (q.text && ![d.retailer, d.title_en, d.title_zh, d.code ?? ''].join(' ').toLowerCase().includes(q.text)) return false;
+  if (q.text && ![d.retailer, d.title_en, d.title_zh, d.code ?? '', schemeName(r.source_url) ?? ''].join(' ').toLowerCase().includes(q.text)) return false;
   return true;
 }
 
@@ -116,8 +130,6 @@ export function compare(sort: Sort): (a: PublicRow, b: PublicRow) => number {
 
 export function publicVoucher(r: PublicRow, lang: Lang) {
   const d = r.data;
-  const source = hostOf(r.source_url);
-  const scheme = PARTNER_SOURCES.find((p) => sameSite(source, p));
   return {
     id: r.id,
     retailer: d.retailer,
@@ -140,7 +152,7 @@ export function publicVoucher(r: PublicRow, lang: Lang) {
     offer_url: d.offer_url,
     terms: lang === 'zh' ? d.terms_zh ?? d.terms_en : d.terms_en,
     source_type: d.source_type,
-    via: scheme ? SCHEME_NAMES[scheme] ?? scheme : null,
+    via: schemeName(r.source_url),
     verification_level: r.verification_level,
     last_checked_at: r.verified_at,
     source_url: r.source_url,

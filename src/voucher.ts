@@ -145,8 +145,18 @@ const isUrl = (value: unknown): value is string => {
   }
 };
 
-const isDate = (value: unknown): value is string =>
-  typeof value === 'string' && DATE_RE.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+/** A real calendar date: "2026-02-30" is refused rather than read as 2 March. */
+const isDate = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
+  const ms = Date.parse(`${value}T00:00:00Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === value;
+};
+
+/**
+ * Characters that only appear in Simplified Chinese (their Traditional forms differ), common in
+ * offer text: 优惠码 购买 运费 会员 满减 赠 … One of them means the text was not written in Traditional.
+ */
+const SIMPLIFIED = /[优码购买卖运费会员选门页订单装妆电时个双这们为学价满减赠领关]/u;
 
 export const today = (now = new Date()): string => now.toISOString().slice(0, 10);
 export const addDays = (date: string, days: number): string =>
@@ -203,7 +213,7 @@ export function validateVoucher(
   if (!isUrl(retailer_url)) err('retailer_url', 'must be the retailer’s home page, e.g. https://www.boots.com');
   const title_en = text('title_en', 160, true);
   const title_zh = text('title_zh', 120, true);
-  if (title_zh && !/\p{Script=Han}/u.test(title_zh)) err('title_zh', 'must be written in Traditional Chinese');
+  if (title_zh && (!/\p{Script=Han}/u.test(title_zh) || SIMPLIFIED.test(title_zh))) err('title_zh', 'must be written in Traditional Chinese');
 
   let code = text('code', 32, false);
   if (code) {
@@ -213,7 +223,7 @@ export function validateVoucher(
 
   const discount_type = oneOf('discount_type', DISCOUNT_TYPES);
   const discount_value = num('discount_value', 0, discount_type === 'percent' ? 100 : 10_000);
-  if ((discount_type === 'percent' || discount_type === 'fixed') && discount_value === null && raw.discount_value === undefined) {
+  if ((discount_type === 'percent' || discount_type === 'fixed') && discount_value === null && (raw.discount_value === undefined || raw.discount_value === null)) {
     err('discount_value', `is required when discount_type is ${discount_type}`);
   }
   const min_spend_gbp = num('min_spend_gbp', 0, 100_000);
@@ -232,6 +242,7 @@ export function validateVoucher(
   if (!isUrl(offer_url)) err('offer_url', 'must be the retailer’s page for this offer');
   const terms_en = text('terms_en', 400, false);
   const terms_zh = text('terms_zh', 300, false);
+  if (terms_zh && SIMPLIFIED.test(terms_zh)) err('terms_zh', 'must be written in Traditional Chinese');
 
   // Provenance: an official source, and a passage from it that states the offer.
   const source_url = prov.source_url;
