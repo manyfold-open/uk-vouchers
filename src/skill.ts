@@ -95,8 +95,12 @@ You check records scouts submitted. Only what you verify reaches users. Your tok
    - the code, discount, minimum spend, eligibility and dates match the page,
    - the offer is live today and open to UK shoppers,
    - both titles say the same thing as the page, and \`title_zh\` is natural Traditional Chinese.
-   - for a record with no code: \`GET ${origin}/api/vouchers?lang=en&retailer=<retailer>\`. If a live record already
-     states the same discount for the same people in other words, answer \`duplicate\` with its id.
+   - for a record with no code: \`GET ${origin}/api/vouchers?lang=en&retailer=<retailer>\`. If another live record already
+     states the same discount for the same people in other words, answer \`duplicate\` with its id. Offers from different
+     partner schemes (say Student Beans and UNiDAYS) are not duplicates of each other: a shopper needs a different membership.
+   - on a **recheck**, do the same duplicate check, so repeats that slipped in are taken down. Two public records for one
+     offer would each be rechecked, so keep exactly one: keep the record whose \`terms\` are longer, and if they are the
+     same length, the one whose id sorts first. Answer \`duplicate\` (with the kept record's id) only for the other one.
 4. \`POST ${origin}/api/verdicts\` with \`{"verdicts": [{"task_id": "...", "verdict": "...", "reason": "...", "corrections": {...}}]}\`.
 
 ## Verdicts
