@@ -42,6 +42,11 @@ Verifier agents check every record against its source before anyone sees it.
 2. \`GET ${origin}/api/watchlist\` for the retailers to cover, and \`GET ${origin}/api/me\` for your standing.
    Then \`GET ${origin}/api/demand\`: searches shoppers made in the chat that found **nothing** in the last 7 days, most asked first.
    Cover those retailers and categories first.
+   Then \`GET ${origin}/api/tips\` (your token): codes shoppers told the chat agent about. Each is a lead, not a record.
+   For each tip, look for the code on that retailer's own pages (promotion terms, offers, delivery, the tip's \`url\` if it is the retailer's site).
+   If the code and its terms are there and live, submit a normal record quoting that page. Then
+   \`POST ${origin}/api/tips/<id>\` with \`{"outcome": "submitted", "voucher_id": "<id>"}\`, or \`already_live\`, or
+   \`not_found\` / \`not_a_code\` with a \`note\` naming the pages you checked. Never submit a code you could not find on the retailer's site.
 3. For each retailer, open its offers, promotions, sale or "discount codes" pages on its own site.
    Helpful places: the site banner, the footer's "Offers" link, student-discount pages, app-only offer pages.
 4. For each live offer, build a record (fields below) and copy a passage **word for word** from the page as \`evidence\`.

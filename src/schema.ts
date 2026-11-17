@@ -7,6 +7,7 @@
  */
 
 import { SIGNALS_SCHEMA } from './signals.ts';
+import { TIPS_SCHEMA } from './tips.ts';
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS vouchers (
@@ -85,6 +86,7 @@ CREATE INDEX IF NOT EXISTS join_log_ip ON join_log (ip, created_at);
 export const schemaStatements = (): string[] => [
   ...SCHEMA.split(';').map((s) => s.trim()).filter(Boolean),
   ...SIGNALS_SCHEMA,
+  ...TIPS_SCHEMA,
 ];
 
 /** Columns added after a table was first created: [table, column, type]. Never remove an entry. */

@@ -12,6 +12,7 @@ import { backfillQuoteChecks, submitRecords } from './submit.ts';
 import { authenticate, issueToken, standing } from './tokens.ts';
 import { HttpError, nowIso, safeEqual } from './util.ts';
 import { adminDecide, applyVerdicts, leaseTasks, maintenance } from './verify.ts';
+import { leaseTips, recordTip, resolveTip } from './tips.ts';
 import { recordDemand, REPORT_WARNING, reportCounts, reportCount, reportVoucher, unmetDemand } from './signals.ts';
 import { compare, isLive, matches, meta, parseLang, parseListQuery, positiveInt, publicVoucher, type PublicRow } from './public.ts';
 import type { Voucher } from './voucher.ts';
@@ -155,6 +156,18 @@ export function createApp(options: { fetcher?: typeof fetch; now?: () => Date; d
   app.post('/api/vouchers/:id/report', async (c) => {
     const result = await reportVoucher(c.env.DB, c.req.param('id'), (await json(c)) as Record<string, unknown>, ip(c), now());
     return c.json({ ...result, warning: result.reports_7d >= REPORT_WARNING });
+  });
+
+  // "I found a code": a lead for the scouts, never published as it is.
+  app.post('/api/tips', async (c) => c.json(await recordTip(c.env.DB, (await json(c)) as Record<string, unknown>, ip(c), now()), 202));
+  // Scouts lease open tips, look for each code on the retailer's own pages, then say what they found.
+  app.get('/api/tips', async (c) => {
+    const token = await authenticate(c.env.DB, c.req.header('authorization'), ['scout']);
+    return c.json({ tips: await leaseTips(c.env.DB, token.id, positiveInt(c.req.query('limit')) ?? 10, now()) });
+  });
+  app.post('/api/tips/:id', async (c) => {
+    const token = await authenticate(c.env.DB, c.req.header('authorization'), ['scout']);
+    return c.json(await resolveTip(c.env.DB, token.id, c.req.param('id'), (await json(c)) as Record<string, unknown>, now()));
   });
 
   app.get('/export.json', async (c) => {
