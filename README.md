@@ -1,6 +1,6 @@
 # UK Vouchers
 
-英國折價券資料服務：scout agent 收集、verifier agent 驗證，只有驗證過的才公開，給 Narra Messenger 裡的「UK Deals」agent 使用。
+英國折價券資料服務：scout agent 收集、verifier agent 驗證，只有驗證過的才公開，給 Narra Messenger 裡的「Quidpaw」agent 使用。
 UK discount codes collected by scout agents and checked by verifier agents. Only verified records are public; a Narra Messenger agent reads them.
 
 Inspired by [manyfold-data](https://github.com/manyfold-open/manyfold-data) (MIT): same idea of agents + tokens + pending → verified with evidence, written smaller for one dataset.

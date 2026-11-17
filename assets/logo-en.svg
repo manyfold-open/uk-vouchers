@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>UK Deals</title>
+  <rect width="100" height="100" rx="24" fill="#1F3A5F"/>
+  <rect x="18" y="32" width="64" height="38" rx="6" fill="#FFFFFF"/>
+  <circle cx="18" cy="51" r="7" fill="#1F3A5F"/>
+  <circle cx="82" cy="51" r="7" fill="#1F3A5F"/>
+  <path d="M37 51 L46 60 L64 41" fill="none" stroke="#E4572E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
