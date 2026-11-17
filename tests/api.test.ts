@@ -276,6 +276,27 @@ describe('verifiers', () => {
     expect((await call('GET', '/api/vouchers')).body.total).toBe(0);
   });
 
+  it('takes down live duplicates on maintenance, keeping the verified one', async () => {
+    const t = await scout();
+    const base = { code: null, discount_type: 'percent', discount_value: 20, min_spend_gbp: null, eligibility: 'student' };
+    const ev = 'Students get 20% off skincare and bodycare all year round. Ends 31 December 2026.';
+    const a = await call('POST', '/api/records', { records: [{ ...record({ ...base, title_en: '20% student discount on skincare' }), evidence: ev }] }, auth(t));
+    const v = await verifier();
+    const [task] = (await call('GET', '/api/tasks', undefined, auth(v))).body.tasks;
+    await call('POST', '/api/verdicts', { verdicts: [{ task_id: task.task_id, verdict: 'verified', reason: 'on page' }] }, auth(v));
+    // A copy that got in before the submit check existed: sent for everyone, then made a student offer.
+    const b = await call('POST', '/api/records', { records: [{ ...record({ ...base, eligibility: 'everyone', title_en: 'Students: 20% off skincare' }), evidence: ev }] }, auth(t));
+    const bId = b.body.results[0].id as string;
+    await db.prepare("UPDATE vouchers SET data_json = json_set(data_json, '$.eligibility', 'student') WHERE id = ?").bind(bId).run();
+
+    const res = await maintenance(db, now);
+    expect(res.duplicates_removed).toBe(1);
+    const row = await db.prepare('SELECT status FROM vouchers WHERE id = ?').bind(bId).first<{ status: string }>();
+    expect(row?.status).toBe('duplicate');
+    expect((await call('GET', '/api/vouchers')).body.vouchers.map((x: { id: string }) => x.id)).toEqual([a.body.results[0].id]);
+    expect((await maintenance(db, now)).duplicates_removed).toBe(0);
+  });
+
   it('expires offers past their end date', async () => {
     await submitted();
     expect(await maintenance(db, new Date('2027-01-02T00:00:00Z'))).toMatchObject({ expired: 1 });

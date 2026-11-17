@@ -16,7 +16,7 @@
 
 import { suspendIfFailing, type Token } from './tokens.ts';
 import { HttpError, newId, nowIso, plusMinutes } from './util.ts';
-import { addDays, identityKey, today, validateVoucher, type Voucher } from './voucher.ts';
+import { addDays, identityKey, retailerDomain, sameOffer, today, validateVoucher, type Voucher } from './voucher.ts';
 
 export const LEASE_MINUTES = 30;
 export const LEASE_MAX = 10;
@@ -233,8 +233,48 @@ export async function applyVerdicts(db: D1Database, token: Token, body: unknown,
  * Housekeeping, run by the cron and on demand: free expired leases, take down offers past
  * their end date, and queue a recheck for every public record that is due.
  */
+/**
+ * Zack's standing rule: a duplicate found among live records is taken down. For each group of
+ * no-code records that state the same offer (sameOffer), keep one — verified before pending,
+ * then the one with the most detail, then the oldest — and mark the rest 'duplicate'.
+ */
+export async function takeDownDuplicates(db: D1Database, now = new Date()) {
+  const stamp = nowIso(now);
+  const { results } = await db
+    .prepare("SELECT id, status, data_json, created_at FROM vouchers WHERE status IN ('pending','verified') ORDER BY created_at")
+    .all<{ id: string; status: string; data_json: string; created_at: string }>();
+  const rows = results.map((r) => ({ ...r, data: JSON.parse(r.data_json) as Voucher })).filter((r) => !r.data.code);
+  const detail = (v: Voucher) =>
+    (v.terms_en?.length ?? 0) + (v.expires_on ? 50 : 0) + (v.starts_on ? 10 : 0) + (v.min_spend_gbp !== null ? 10 : 0);
+  const rank = (r: (typeof rows)[number]) => (r.status === 'verified' ? 1_000_000 : 0) + detail(r.data);
+
+  const gone = new Set<string>();
+  let removed = 0;
+  for (const keep of [...rows].sort((a, b) => rank(b) - rank(a) || a.created_at.localeCompare(b.created_at))) {
+    if (gone.has(keep.id)) continue;
+    for (const other of rows) {
+      if (other.id === keep.id || gone.has(other.id)) continue;
+      if (retailerDomain(other.data) !== retailerDomain(keep.data) || !sameOffer(other.data, keep.data)) continue;
+      gone.add(other.id);
+      removed++;
+      const reason = `same offer as ${keep.id}`;
+      await db.batch([
+        db.prepare("UPDATE vouchers SET status = 'duplicate', next_check_at = NULL, updated_at = ? WHERE id = ?").bind(stamp, other.id),
+        db
+          .prepare("UPDATE tasks SET status = 'done', done_at = ?, leased_by = NULL, lease_until = NULL, note = ? WHERE voucher_id = ? AND status IN ('open','leased','needs_human')")
+          .bind(stamp, `auto duplicate: ${reason}`, other.id),
+        db
+          .prepare("INSERT INTO revisions (voucher_id, actor, action, before_json, after_json, reason, created_at) VALUES (?, 'system', 'auto-duplicate', ?, ?, ?, ?)")
+          .bind(other.id, JSON.stringify({ status: other.status }), JSON.stringify({ status: 'duplicate', duplicate_of: keep.id }), reason, stamp),
+      ]);
+    }
+  }
+  return removed;
+}
+
 export async function maintenance(db: D1Database, now = new Date()) {
   await releaseExpiredLeases(db, now);
+  const duplicates = await takeDownDuplicates(db, now);
   const stamp = nowIso(now);
   const day = today(now);
 
@@ -265,7 +305,7 @@ export async function maintenance(db: D1Database, now = new Date()) {
       due.map((r) => db.prepare("INSERT INTO tasks (id, voucher_id, kind, status, created_at) VALUES (?, ?, 'recheck', 'open', ?)").bind(newId('t'), r.id, stamp)),
     );
   }
-  return { expired: ended.length, rechecks_queued: due.length, tomorrow: addDays(day, 1) };
+  return { expired: ended.length, duplicates_removed: duplicates, rechecks_queued: due.length, tomorrow: addDays(day, 1) };
 }
 
 const ADMIN_ACTIONS = ['verified', 'rejected', 'expired'] as const;
