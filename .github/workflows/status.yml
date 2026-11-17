@@ -1,0 +1,19 @@
+name: Status
+# Read-only summary of the public data, so the numbers can be checked without the admin password.
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: ISO time; list records verified since then (default last 24 hours)
+        required: false
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/status.mjs
+        env:
+          SINCE: ${{ inputs.since }}
