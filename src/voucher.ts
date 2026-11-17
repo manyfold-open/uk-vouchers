@@ -126,6 +126,11 @@ export function sameOffer(a: Voucher, b: Voucher): boolean {
   const y = content(b.title_en);
   // Titles with nothing specific left ("20% off everything") match each other, never a specific one.
   if (x.size === 0 || y.size === 0) return x.size === y.size;
+  // Names that only one title has (a route, a range, a brand: "Greater Anglia" vs "Northern") mean different offers.
+  const names = (t: string, other: Set<string>) =>
+    t.split(/\s+/).slice(1).filter((w) => /^\p{Lu}/u.test(w)).map((w) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
+      .filter((w) => w && content(t).has(w) && !other.has(w));
+  if (names(a.title_en, y).length > 0 && names(b.title_en, x).length > 0) return false;
   const shared = [...x].filter((w) => y.has(w)).length;
   return shared / (x.size + y.size - shared) >= 0.5;
 }
