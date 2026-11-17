@@ -75,11 +75,19 @@ describe('blockedPage', () => {
   });
 });
 
-it('offerLinks keeps promotion terms under /help, and skips products and gift vouchers', () => {
+it('offerLinks keeps promotion terms and delivery info under /help, and skips products and gift vouchers', () => {
   const page = `<a href="/info/help/promotions-terms-and-conditions">Promotion T&Cs</a>
     <a href="/p/beauty-box/the-advent-calendar/17691490/">Offer box</a>
     <a href="/gift-vouchers/">Gift voucher offers</a> <a href="/evouchers">eVoucher deals</a> <a href="/help/delivery">Help: delivery offers</a>`;
-  expect(offerLinks(page, 'https://www.dunelm.com/').map((l) => l.url)).toEqual(['https://www.dunelm.com/info/help/promotions-terms-and-conditions']);
+  expect(offerLinks(page, 'https://www.dunelm.com/').map((l) => l.url)).toEqual([
+    'https://www.dunelm.com/info/help/promotions-terms-and-conditions',
+    'https://www.dunelm.com/help/delivery',
+  ]);
+});
+
+it('offerLinks keeps delivery information pages even without offer words', () => {
+  const page = '<a href="/delivery-information">Delivery</a> <a href="/help/returns">Returns</a> <a href="/p/delivery-van/123">Toy van</a>';
+  expect(offerLinks(page, 'https://www.shop.co.uk/').map((l) => l.url)).toEqual(['https://www.shop.co.uk/delivery-information']);
 });
 
 it('leaves site chrome out of a code’s context', () => {

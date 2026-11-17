@@ -200,6 +200,8 @@ export function extractOffers(html: string, pageUrl: string, today = new Date().
 const NOT_OFFER_PAGES = /\/p\/|\/product[s]?\/|\/dp\/|gift-?cards?|gift-?vouchers?|e-?vouchers?|\/help\b|customer-?services?|\/faqs?\b|\/account|\/login|\/sign-?in|\/basket|\/cart|\/stores?\//i;
 /** Promotion terms pages often live under /help but list codes and their dates: never skip those. */
 const PROMO_TERMS = /promo|promotion|offer-?terms|voucher-?codes?|discount-?codes?/i;
+/** Delivery information pages state free-delivery thresholds and codes, even under /help. */
+const DELIVERY_INFO = /\/(?:[a-z-]*-)?delivery(?:-(?:information|info|options|and-returns|returns|charges))?\/?$/i;
 
 /** Links on the same site that look like offers pages, best first, for the scout to open next. */
 export function offerLinks(html: string, pageUrl: string): { url: string; text: string }[] {
@@ -216,13 +218,15 @@ export function offerLinks(html: string, pageUrl: string): { url: string; text: 
     }
     const sameSite = url.hostname.replace(/^www\./, '') === host || url.hostname.endsWith(`.${host}`);
     if (!sameSite || !/^https?:$/.test(url.protocol)) continue;
-    if (NOT_OFFER_PAGES.test(url.pathname) && !(PROMO_TERMS.test(url.pathname) && !/\/p\//.test(url.pathname))) continue;
+    const delivery = DELIVERY_INFO.test(url.pathname);
+    if (NOT_OFFER_PAGES.test(url.pathname) && !delivery && !(PROMO_TERMS.test(url.pathname) && !/\/p\//.test(url.pathname))) continue;
     const hay = `${url.pathname} ${text}`.toLowerCase();
     let score = 0;
     if (/(coded-?promo|promo-?codes?|discount-?codes?|voucher|coupon)/.test(hay)) score = 3;
     else if (/\b(offers?|promotions?|promo|deals?|discounts?|student)\b/.test(hay)) score = 2;
     else if (/\b(sale|clearance|savings?)\b/.test(hay)) score = 1;
     if (/terms|conditions|t-?and-?c/.test(hay) && /promo|offer/.test(hay)) score = Math.max(score, 3); // promotions T&Cs list codes and dates
+    if (delivery) score = Math.max(score, 2); // free-delivery thresholds and codes
     if (!score) continue;
     url.hash = '';
     const prev = found.get(url.href);
