@@ -187,6 +187,9 @@ async def apply(actions,room,user,result):
                 except Exception as e: logging.warning('Report failed: %s',type(e).__name__)
                 v=next((o for o in (result.get('reported_from') or []) if o.get('id')==vid),{})
                 DB.execute('insert or ignore into reports(user,room,voucher_id,retailer,title,ts) values(?,?,?,?,?,?)',(user,room,vid,v.get('retailer',''),v.get('title',''),time.time()))
+        elif 'tip' in a:
+            try: await http(VOUCHERS+'/api/tips',a['tip'])
+            except Exception as e: logging.warning('Tip failed: %s',type(e).__name__)
         elif 'demand' in a and a['demand']:
             try: await http(VOUCHERS+'/api/demand',a['demand'])
             except Exception: pass  # best effort

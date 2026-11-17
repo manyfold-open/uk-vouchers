@@ -100,6 +100,13 @@ CASES = [
     ('what am i subscribed to', N, 'mysubs', {}),
     ('show me the weekly picks', N, {'browse'}, {}),
     ('weekly digest on pls', N, 'weekly_on', {}),
+    # --- shopper tips ---
+    ('I used SAVE15 at boots, 15% off', N, 'tip', {}),
+    ('BOOTS10 works at boots', N, 'tip', {}),
+    ('我在 ASOS 用了 ASOS20 有效', N, 'tip', {}),
+    ('分享一個 superdrug 的碼 SD10', N, 'tip', {}),
+    ('found a code: HELLO10', N, {'tip', 'tipask'}, {}),
+    ('does SAVE15 work at boots?', N, {'search'}, {}),
     # --- chat / bot questions / off-topic ---
     ('cancel culture lol', N, 'text', {}),
     ('are you kidding me 😂', N, 'text', {}),
@@ -178,6 +185,7 @@ def classify(out):
         if 'set_identity' in a: return ('identity' if a['set_identity'] else 'identity_clear'), a
     for a in acts:
         if 'report' in a: return 'report', a
+        if 'tip' in a: return 'tip', a
         if 'unsubscribe' in a:
             v = a['unsubscribe']
             return {'weekly': 'weekly_off', 'sales': 'sales_off'}.get(v, 'unsubscribe'), a
@@ -187,6 +195,7 @@ def classify(out):
     t = out.get('text', '')
     if t.startswith(('Which shop or category', '要通知哪家店')): return 'subask', None
     if t.startswith(('Which one failed', '是哪一個不能用')): return 'which', None
+    if t.startswith(('Thanks! Which shop', 'Thanks! What is the', '謝謝分享！這是哪家店')) or '的碼是哪幾個字' in t: return 'tipask', None
     if t.startswith(("I haven't shown you a list", '我這裡還沒有給你看過清單')): return 'nolist', None
     if t.startswith(('Your alerts', '你的通知', 'No alerts yet', '你還沒有訂閱')): return 'mysubs', None
     demand = next((a['demand'] for a in acts if 'demand' in a), None)
