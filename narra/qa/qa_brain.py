@@ -71,6 +71,9 @@ CASES = [
     ('我是學生', [], dict(lang='zh', kind='offers', must='通知你嗎')),
     ("I'm a student", [], dict(lang='en', kind='offers', must='DM')),
     ('停止通知', [], dict(lang='zh', kind='text', must='取消')),
+    ('let me know any discount codes i can use in boots', [], dict(lang='en', kind='offers', must='Boots', mustnot='DM me|私訊')),
+    ('let me know when Boots has a new code', [], dict(lang='en', kind='text', must='Boots')),
+    ('tell me any deals at Tesco', [], dict(lang='en', kind='offers')),
     ('提醒我 Black Friday', [], dict(lang='zh', kind='text', must='黑色星期五')),
 ]
 

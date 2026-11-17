@@ -30,6 +30,9 @@ DB.execute('create table if not exists rooms (room text primary key, lang text, 
 # What each reply showed, so "更多", "第 2 個不能用" and a 👎 on that message know which offers they mean.
 DB.execute('create table if not exists shown (src text primary key, bot text, room text, user text, offers text, query text, page integer, total integer, ts real)')
 DB.execute('create table if not exists pending_sub (room text, user text, sub text, ts real, primary key (room, user))')
+# Earlier releases fixed a group's language from its first message; only explicit commands do now.
+if not DB.execute("select 1 from kv where key='room_lang_v2'").fetchone():
+    DB.execute('update rooms set lang=null'); DB.execute("insert into kv values('room_lang_v2','1')")
 DB.commit()
 TASKS={}; VOICE={}; CANCELLED=set(); TURNS=set(); LOCKS={}
 STALE_MS=30*60*1000      # older questions would only confuse the room
@@ -198,6 +201,7 @@ async def _reply(room,event,context,attachment=None):
     group=bool(context and context.get('group')); user=event.get('sender','')
     try:
         text=clean(voice.get('transcript',content.get('body','')) if voice else content.get('body',''))
+        # A group's language is only fixed by 「@Quidpaw 說英文 / 說中文」; otherwise each message is answered in its own language.
         st=room_state(room); lang=st['lang'] if group else None
         zh=(lang or ('zh' if re.search('[\u3400-\u9fff]',text) else 'en'))=='zh'
         result=None
@@ -207,7 +211,6 @@ async def _reply(room,event,context,attachment=None):
             ctx.update(history=await history(room,eid),attachment=attachment,lang=lang,voice=bool(voice))
             result=await BRAIN.respond(text,ctx)
             result['reported_from']=ctx.get('replied') or (ctx.get('last') or {}).get('offers')
-            if group and not lang: set_room(room,lang=BRAIN.language(text,ctx['history']))  # one language per group
             if not group: NOTIFIER.remember_user(user,room,'zh' if re.search('[\u3400-\u9fff]',result['text']) else 'en')
             await apply(result['actions'],room,user,result)
             body=result['text']

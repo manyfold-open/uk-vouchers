@@ -407,8 +407,10 @@ WEEKLY_OFF = re.compile(r'(關閉|取消|不要|停止)\s*(個人)?(每週)?(週
 SALES = re.compile(r'大促|黑五|黑色星期五|boxing day|節日|發薪|payday|black friday|sales? (alerts?|reminders?)', re.I)
 SALES_OFF = re.compile(r'(關閉|取消|不要|停止)\s*(大促|發薪|節日)|sales? (alerts?|reminders?) off', re.I)
 MORE = re.compile(r'^\s*(更多|再來|再多一點|下一頁|還有嗎|還有呢|還有其他嗎|more|next|show more|any more)[\s!！。.~?？]*$', re.I)
-REPORT = re.compile(r'不能用|用不了|沒辦法用|沒用|失效|無效|不行用|沒效|過期了|碼錯|doesn.?t work|didn.?t work|not working|invalid|expired|wrong code', re.I)
-SUBSCRIBE = re.compile(r'通知我|提醒我|訂閱|收藏|存起來|有新的?.{0,6}(告訴|通知|跟我說)|notify me|alert me|let me know|remind me|subscribe|save (it|this|that|number)', re.I)
+# A complaint about a code shown, not a wish for valid ones ("codes that haven't expired" is a search).
+REPORT = re.compile(r'不能用|用不了|沒辦法用|失效了?|無效|不行用|沒效|過期了|碼錯|(does|did|is)n.?t work|not working|won.?t work|wrong code|invalid code|code (is |was )?(invalid|expired|wrong)|(it|this|that|number \d+) (is |has |was )?expired', re.I)
+# Asking to be told LATER. "let me know any codes for Boots" is a search, "let me know when Boots has one" is an alert.
+SUBSCRIBE = re.compile(r'通知我|提醒我|訂閱|收藏|存起來|有新的?.{0,6}(告訴|通知|跟我說)|notify me|alert me|(let me know|tell me|message me|ping me) (when|if|once|as soon)|remind me|subscribe|save (it|this|that|number)', re.I)
 UNSUB = re.compile(r'(取消|停止|關閉|不要再?|別再?).{0,20}(通知|訂閱|提醒)|unsubscribe|stop (\S+ )?(alerts|notifications|notifying)|no more alerts', re.I)
 MYSUBS = re.compile(r'我的訂閱|我的通知|訂閱了(什麼|哪些)|my (alerts|subscriptions)', re.I)
 YES = re.compile(r'^\s*(好|好啊|好喔|好的|要|要啊|可以|嗯嗯?|麻煩了|yes|yeah|yep|ok|okay|sure|y|please)[\s!！。.~]*$', re.I)
