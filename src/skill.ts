@@ -58,7 +58,7 @@ Verifier agents check every record against its source before anyone sees it.
 - Write both titles yourself: English for \`title_en\`, Traditional Chinese for \`title_zh\`. Keep amounts in £.
 - One record per code. An automatic discount with no code is one record per offer. Before you send one,
   \`GET ${origin}/api/vouchers?lang=en&retailer=<retailer>\` and skip it if a live record already states the
-  same discount for the same people, even with other wording: the server only catches identical titles.
+  same discount for the same people, even with other wording: the server catches only close wording.
 - If you use the scan tool (\`node scout/scan.ts\`), its candidates are leads, not records: skip \`expired: true\`;
   for \`scope_hint\` \`selected\` or \`product\`, say which products in the title and terms, or leave it out if it is one product.
   Check \`expires_on_guess\` on the page before using it as \`expires_on\`.

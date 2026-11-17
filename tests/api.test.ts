@@ -98,6 +98,22 @@ describe('scouts', () => {
     expect(res.body.results[0].quote_found).toBe(false);
   });
 
+  it('catches the same no-code offer worded differently, but not a different one', async () => {
+    const t = await scout();
+    const base = { code: null, discount_type: 'percent', discount_value: 20, min_spend_gbp: null, eligibility: 'student' };
+    const ev = 'Students get 20% off skincare and bodycare all year round. Ends 31 December 2026.';
+    const res = await call('POST', '/api/records', {
+      records: [
+        { ...record({ ...base, title_en: '20% student discount on skincare' }), evidence: ev },
+        { ...record({ ...base, title_en: 'Students: 20% off skincare' }), evidence: ev },
+        { ...record({ ...base, title_en: '20% off Christmas trees for students' }), evidence: ev },
+        { ...record({ ...base, eligibility: 'everyone', title_en: '20% off skincare' }), evidence: ev },
+      ],
+    }, auth(t));
+    expect(res.body.results.map((r: { result: string }) => r.result)).toEqual(['accepted', 'duplicate', 'accepted', 'accepted']);
+    expect(res.body.results[1].id).toBe(res.body.results[0].id);
+  });
+
   it('caps pending records per scout', async () => {
     const t = await scout();
     const many = Array.from({ length: PENDING_CAP_START }, (_, i) => ({ ...record({ code: `GLOW${i + 100}` }), evidence: `${EXAMPLE.evidence} Code GLOW${i + 100}.` }));

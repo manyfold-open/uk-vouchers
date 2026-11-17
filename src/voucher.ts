@@ -93,6 +93,26 @@ export function identityKey(v: Pick<Voucher, 'retailer_url' | 'code' | 'title_en
   return `${who}|title:${v.title_en.toLowerCase().replace(/[^\p{L}\p{N}%£]+/gu, ' ').trim()}`;
 }
 
+const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'on', 'for', 'with', 'to', 'in', 'at', 'your', 'you', 'off', 'when', 'over', 'all', 'up']);
+const words = (t: string) =>
+  new Set(t.toLowerCase().replace(/[^\p{L}\p{N}%£]+/gu, ' ').split(' ').filter((w) => w && !STOP.has(w)));
+
+/**
+ * Whether two offers with no code are the same offer worded differently: same retailer, same
+ * discount, same people and minimum spend, and titles that share most of their words.
+ * Codes are matched exactly by identityKey instead.
+ */
+export function sameOffer(a: Voucher, b: Voucher): boolean {
+  if (a.code || b.code) return false;
+  if (retailerDomain(a) !== retailerDomain(b)) return false;
+  if (a.discount_type !== b.discount_type || a.discount_value !== b.discount_value) return false;
+  if (a.eligibility !== b.eligibility || (a.min_spend_gbp ?? 0) !== (b.min_spend_gbp ?? 0)) return false;
+  const x = words(a.title_en);
+  const y = words(b.title_en);
+  const shared = [...x].filter((w) => y.has(w)).length;
+  return shared / Math.min(x.size, y.size) >= 0.6;
+}
+
 const isUrl = (value: unknown): value is string => {
   if (typeof value !== 'string') return false;
   try {

@@ -16,7 +16,7 @@ import { fetchPage } from './fetch-page.ts';
 import { quoteOnPage } from './quote.ts';
 import { standing, type Token } from './tokens.ts';
 import { HttpError, newId, nowIso } from './util.ts';
-import { identityKey, retailerDomain, validateVoucher, type FieldError, type Provenance, type Voucher } from './voucher.ts';
+import { identityKey, retailerDomain, sameOffer, validateVoucher, type FieldError, type Provenance, type Voucher } from './voucher.ts';
 
 export const BATCH_MAX = 20;
 
@@ -72,6 +72,22 @@ export async function submitRecords(
     for (const row of rows) live.set(row.identity_key, row.id);
   }
 
+  // Offers with no code, live at the same retailers: caught when only the wording differs.
+  const liveNoCode = new Map<string, { id: string; data: Voucher }[]>();
+  const domains = [...new Set(valid.filter((v) => !v.voucher.code).map((v) => retailerDomain(v.voucher)))];
+  if (domains.length) {
+    const { results: rows } = await db
+      .prepare(`SELECT id, retailer_domain, data_json FROM vouchers WHERE status IN ('pending', 'verified') AND retailer_domain IN (${domains.map(() => '?').join(',')})`)
+      .bind(...domains)
+      .all<{ id: string; retailer_domain: string; data_json: string }>();
+    for (const row of rows) {
+      const list = liveNoCode.get(row.retailer_domain) ?? [];
+      list.push({ id: row.id, data: JSON.parse(row.data_json) as Voucher });
+      liveNoCode.set(row.retailer_domain, list);
+    }
+  }
+  const similar = (v: Voucher) => (liveNoCode.get(retailerDomain(v)) ?? []).find((r) => sameOffer(v, r.data))?.id;
+
   // The server's own look at each source page, once per URL.
   const pages = new Map<string, Promise<string | null>>();
   const page = (url: string) => {
@@ -85,7 +101,7 @@ export async function submitRecords(
   const stamp = nowIso(now);
 
   for (const v of valid) {
-    const existing = live.get(v.key);
+    const existing = live.get(v.key) ?? similar(v.voucher);
     if (existing) {
       results.push({ index: v.index, result: 'duplicate', id: existing });
       continue;
@@ -140,6 +156,10 @@ export async function submitRecords(
       throw error;
     }
     live.set(v.key, id);
+    if (!v.voucher.code) {
+      const d = retailerDomain(v.voucher);
+      liveNoCode.set(d, [...(liveNoCode.get(d) ?? []), { id, data: v.voucher }]);
+    }
     pending++;
     results.push({ index: v.index, result: 'accepted', id, quote_found: quoteFound, quote_check: defer ? 'queued' : 'done', flagged });
     if (defer) queued.push(id);
