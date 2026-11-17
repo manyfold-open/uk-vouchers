@@ -94,6 +94,15 @@ export function identityKey(v: Pick<Voucher, 'retailer_url' | 'code' | 'title_en
 }
 
 const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'on', 'for', 'with', 'to', 'in', 'at', 'your', 'you', 'off', 'when', 'over', 'all', 'up']);
+/** Words every offer title shares; they say nothing about which products an offer covers. */
+const GENERIC = new Set([
+  'selected', 'select', 'discount', 'discounts', 'save', 'get', 'extra', 'deal', 'deals', 'offer', 'offers', 'sale', 'now',
+  'student', 'students', 'via', 'unidays', 'totum', 'nhs', 'everyone', 'only', 'exclusive',
+  'shop', 'online', 'store', 'here', 'today', 'just', 'every', 'one', 'two', 'per', 'less', 'more', 'than', 'is', 'are',
+  'enjoy', 'plus', 'from', 'by', 'everything', 'sitewide', 'storewide',
+]);
+/** Scheme names made of ordinary words, removed as whole phrases so "blue jeans" keeps "blue". */
+const SCHEMES = /\b(blue light card|blue light|student beans)\b/gi;
 const words = (t: string) =>
   new Set(t.toLowerCase().replace(/[^\p{L}\p{N}%£]+/gu, ' ').split(' ').filter((w) => w && !STOP.has(w)));
 
@@ -107,10 +116,18 @@ export function sameOffer(a: Voucher, b: Voucher): boolean {
   if (retailerDomain(a) !== retailerDomain(b)) return false;
   if (a.discount_type !== b.discount_type || a.discount_value !== b.discount_value) return false;
   if (a.eligibility !== b.eligibility || (a.min_spend_gbp ?? 0) !== (b.min_spend_gbp ?? 0)) return false;
-  const x = words(a.title_en);
-  const y = words(b.title_en);
+  // Compare what the offer covers, not how it is phrased: drop amounts, generic deal words and the
+  // retailer's own name, plus single letters ("M&S", "women's"), then require most of the remaining words to match (Jaccard >= 0.5).
+  // "20% off selected coats" and "20% off selected kidswear" share only generic words: different offers.
+  const name = words(a.retailer);
+  const content = (t: string) =>
+    new Set([...words(t.replace(SCHEMES, ' '))].filter((w) => w.length > 1 && !GENERIC.has(w) && !name.has(w) && !/^[£%\d]/.test(w)));
+  const x = content(a.title_en);
+  const y = content(b.title_en);
+  // Titles with nothing specific left ("20% off everything") match each other, never a specific one.
+  if (x.size === 0 || y.size === 0) return x.size === y.size;
   const shared = [...x].filter((w) => y.has(w)).length;
-  return shared / Math.min(x.size, y.size) >= 0.6;
+  return shared / (x.size + y.size - shared) >= 0.5;
 }
 
 const isUrl = (value: unknown): value is string => {
