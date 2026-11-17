@@ -1,0 +1,8 @@
+{
+  "name": "quidpaw-cards",
+  "private": true,
+  "type": "module",
+  "description": "Offer cards for Quidpaw: SVG drawn here, PNG by resvg with Noto Sans TC.",
+  "scripts": { "setup": "node card.mjs --setup" },
+  "dependencies": { "@resvg/resvg-js": "2.6.2" }
+}

@@ -1,7 +1,7 @@
-"""Quidpaw speaking first: alerts, reminders, report follow-ups and group digests.
+"""Quidpaw speaking first: alerts, reminders, report follow-ups and scheduled picks.
 
-Every message here is something a person opted into: a subscription, a saved offer, a report
-they made, or a group setting. Limits: nothing between 21:00 and 09:00 UK time (it waits for
+Every message here is something a person opted into: a subscription (optionally with a minimum
+discount), a saved offer, a report they made, Monday picks, or sale and payday reminders. Limits: nothing between 21:00 and 09:00 UK time (it waits for
 the morning), at most two messages a day to one person (offers bundled into one).
 DMs only: Narra's agent policy (F23) does not allow an agent to post first in a group, and an
 agent cannot open a new DM, so a person must have talked to Quidpaw in a DM before.
@@ -25,12 +25,23 @@ SCHEMA = [
     'create table if not exists reports (user text, room text, voucher_id text, retailer text, title text, ts real, resolved integer default 0, primary key (user, voucher_id))',
     'create table if not exists seen (id text primary key, first_seen real)',
     'create table if not exists outbox (id integer primary key autoincrement, user text, room text, body text, created real)',
+    'create table if not exists events (user text, key text, primary key (user, key))',
 ]
+SUB_COLUMNS = [('threshold', 'real'), ('fp', 'text')]
+SCHEDULE_HOUR = 10   # Monday picks, sale eves, payday and term start go out from 10:00 UK
 
 
 def setup(db):
     for sql in SCHEMA:
         db.execute(sql)
+    have = {r[1] for r in db.execute('pragma table_info(subs)').fetchall()}
+    for col, typ in SUB_COLUMNS:
+        if col not in have:
+            db.execute(f'alter table subs add column {col} {typ}')
+    # Offers seen by the first release were stamped with their seeding time; make them "old" once.
+    if db.execute("select 1 from sqlite_master where name='kv'").fetchone() and not db.execute("select 1 from kv where key='seen_v2'").fetchone():
+        db.execute('update seen set first_seen=0')
+        db.execute("insert or replace into kv values('seen_v2','1')")
     db.commit()
 
 
@@ -53,6 +64,34 @@ def matches(sub, v):
     if k == 'eligibility':
         return v.get('eligibility') == val
     return False
+
+
+def occasion(d):
+    """Days worth a reminder for people who asked for sale and payday reminders (UK)."""
+    if d.month == 11 and d.weekday() == 3 and 21 <= d.day <= 27:
+        return 'black-friday-eve'          # the Thursday before the 4th Friday
+    if d.month == 12 and d.day == 24:
+        return 'boxing-day-eve'           # the 25th is Christmas Day: a day early, kindly
+    nxt = d + dt.timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += dt.timedelta(days=1)
+    if d.weekday() < 5 and nxt.month != d.month:
+        return 'payday'                   # last working day of the month
+    return None
+
+
+def term_start(d):
+    """First Monday of September: students' new term."""
+    return d.month == 9 and d.weekday() == 0 and d.day <= 7
+
+
+def changes_text(label, old, new, zh):
+    names = {'code': ('碼', 'code'), 'min_spend_gbp': ('最低消費', 'minimum spend'), 'discount_value': ('折扣', 'discount'), 'expires_on': ('到期日', 'end date')}
+    show = lambda k, x: ('無' if zh else 'none') if x in (None, '') else (f'£{x:g}' if k == 'min_spend_gbp' and isinstance(x, (int, float)) else str(x))
+    diffs = [f"{names[k][0 if zh else 1]}：{show(k, old.get(k))} → {show(k, new.get(k))}" if zh else
+             f"{names[k][1]}: {show(k, old.get(k))} → {show(k, new.get(k))}" for k in names if old.get(k) != new.get(k)]
+    head = f'📝 你收藏的「{label}」條件改了：' if zh else f'📝 "{label}", which you saved, changed:'
+    return head + '\n' + '\n'.join('• ' + d for d in diffs)
 
 
 def localize(v, zh):
@@ -80,8 +119,10 @@ class Notifier:
         by_id = {v['id']: v for v in live}
         seeded = self.db.execute("select 1 from kv where key='seen_seeded'").fetchone()
         new = [v for v in live if not self.db.execute('select 1 from seen where id=?', (v['id'],)).fetchone()]
-        self.db.executemany('insert or ignore into seen values(?,?)', [(v['id'], now) for v in new])
-        if not seeded:  # first run: everything live counts as already known, so nobody gets a flood
+        # First run: everything live counts as already known (first_seen 0), so nobody gets a flood
+        # and Monday picks only count offers that really appeared after Quidpaw started watching.
+        self.db.executemany('insert or ignore into seen values(?,?)', [(v['id'], now if seeded else 0) for v in new])
+        if not seeded:
             self.db.execute("insert or replace into kv values('seen_seeded','1')"); new = []
         self.db.commit()
         tomorrow = (local + dt.timedelta(days=1)).date().isoformat()
@@ -89,6 +130,8 @@ class Notifier:
         self._saved(by_id, tomorrow, now)
         self._report_outcomes(by_id, now)
         awake = DAY_START <= local.hour < DAY_END
+        if awake and local.hour >= SCHEDULE_HOUR:
+            self._scheduled(live, local, now)
         if awake:
             await self._flush(local.date().isoformat())
         return {'live': len(live), 'new': len(new), 'awake': awake}
@@ -107,11 +150,11 @@ class Notifier:
     def _alerts(self, new, now):
         if not new:
             return
-        subs = self.db.execute("select user, kind, value, label from subs where kind in ('retailer','category','eligibility')").fetchall()
+        subs = self.db.execute("select user, kind, value, label, threshold from subs where kind in ('retailer','category','eligibility')").fetchall()
         per_user = {}
-        for uid, kind, value, label in subs:
+        for uid, kind, value, label, minimum in subs:
             for v in new:
-                if matches({'kind': kind, 'value': value}, v):
+                if matches({'kind': kind, 'value': value}, v) and strength(v) >= (minimum or 0):
                     per_user.setdefault(uid, {}).setdefault(v['id'], (label, v))
         for uid, hits in per_user.items():
             u = self.user(uid); zh = (u or {}).get('lang') != 'en'
@@ -122,14 +165,22 @@ class Notifier:
                         '回「收藏第 1 個」到期前提醒你；回「停止通知」就不再提醒。' if zh else 'Say "save number 1" for an end reminder, or "stop alerts" to stop.')
 
     def _saved(self, by_id, tomorrow, now):
-        for uid, value, label, expires_on, reminded in self.db.execute("select user, value, label, expires_on, reminded from subs where kind='offer'").fetchall():
+        for uid, value, label, expires_on, reminded, fp in self.db.execute("select user, value, label, expires_on, reminded, fp from subs where kind='offer'").fetchall():
             u = self.user(uid); zh = (u or {}).get('lang') != 'en'
             v = by_id.get(value)
             if not v:  # taken down (ended, failed a recheck, or a duplicate)
                 self._queue(uid, (f'你收藏的「{label}」已經下架了 🐾 想看同類的其他優惠就問我。' if zh else
                                   f'"{label}", which you saved, has been taken down 🐾 Ask me for similar ones.'), now)
                 self.db.execute("delete from subs where user=? and kind='offer' and value=?", (uid, value))
-            elif v.get('expires_on') == tomorrow and not reminded:
+                continue
+            now_fp = {k: v.get(k) for k in ('code', 'min_spend_gbp', 'discount_value', 'expires_on')}
+            old = json.loads(fp) if fp else None
+            if old and old != now_fp:
+                self._queue(uid, changes_text(label, old, now_fp, zh), now, [localize(v, zh)], zh)
+                self.db.execute("update subs set fp=?, reminded=0 where user=? and kind='offer' and value=?", (json.dumps(now_fp), uid, value))
+            elif not old:
+                self.db.execute("update subs set fp=? where user=? and kind='offer' and value=?", (json.dumps(now_fp), uid, value))
+            if v.get('expires_on') == tomorrow and not reminded:
                 self._queue(uid, '⏰ 提醒：你收藏的優惠明天到期，記得用！' if zh else '⏰ Reminder: an offer you saved ends tomorrow!', now, [localize(v, zh)], zh)
                 self.db.execute("update subs set reminded=1 where user=? and kind='offer' and value=?", (uid, value))
         self.db.commit()
@@ -153,6 +204,53 @@ class Notifier:
             if body:
                 self._queue(uid, body, now)
             self.db.execute('update reports set resolved=1 where user=? and voucher_id=?', (uid, vid))
+        self.db.commit()
+
+    def _once(self, uid, key):
+        if self.db.execute('select 1 from events where user=? and key=?', (uid, key)).fetchone():
+            return False
+        self.db.execute('insert into events values(?,?)', (uid, key))
+        return True
+
+    def _picks(self, uid, live, since=None, n=3):
+        """Best offers for this person: their shops and categories first, then their group (student...), then everyone."""
+        u = self.user(uid) or {}
+        subs = [dict(kind=k, value=v) for k, v in self.db.execute(
+            "select kind, value from subs where user=? and kind in ('retailer','category','eligibility')", (uid,)).fetchall()]
+        pool = [v for v in live if since is None or (self.db.execute('select first_seen from seen where id=?', (v['id'],)).fetchone() or [0])[0] >= since]
+        mine = lambda v: any(matches(s, v) for s in subs)
+        rank = lambda v: (not mine(v), v.get('eligibility') not in (u.get('identity'), 'everyone'), -strength(v))
+        picked, per = [], {}
+        for v in sorted(pool, key=rank):
+            if per.get(v['retailer'], 0) < 1:   # one per shop
+                picked.append(v); per[v['retailer']] = 1
+            if len(picked) == n:
+                break
+        return picked
+
+    def _scheduled(self, live, local, now):
+        day = local.date()
+        week = f'{day.isocalendar()[0]}-W{day.isocalendar()[1]}'
+        what = occasion(day)
+        for uid, kind in self.db.execute("select user, kind from subs where kind in ('weekly','sales','eligibility')").fetchall():
+            u = self.user(uid) or {}; zh = u.get('lang') != 'en'
+            if kind == 'weekly' and day.weekday() == 0 and self._once(uid, 'weekly-' + week):
+                picks = self._picks(uid, live, since=now - 7 * 86400)
+                if picks:  # nothing new this week: no message
+                    self._queue(uid, '🐾 本週新上架精選：' if zh else '🐾 New this week:', now, [localize(v, zh) for v in picks], zh,
+                                '說「關閉週報」就不再收到。' if zh else 'Say "weekly off" to stop these.')
+            elif kind == 'sales' and what and self._once(uid, f'{what}-{day.isoformat()}'):
+                head = {'black-friday-eve': ('🖤 明天就是黑色星期五！先看今天最划算的：', '🖤 Black Friday is tomorrow! The best deals today:'),
+                        'boxing-day-eve': ('🎁 Boxing Day 快到了，先看現在最划算的：', "🎁 Boxing Day is almost here. The best deals now:"),
+                        'payday': ('💷 發薪日快樂！今天最划算的幾個：', '💷 Happy payday! The best deals today:')}[what]
+                picks = self._picks(uid, live)
+                if picks:
+                    self._queue(uid, head[0] if zh else head[1], now, [localize(v, zh) for v in picks], zh,
+                                '說「關閉大促提醒」就不再收到。' if zh else 'Say "sale alerts off" to stop these.')
+            elif kind == 'eligibility' and term_start(day) and self._once(uid, f'term-{day.year}'):
+                picks = [v for v in self._picks(uid, live, n=10) if v.get('eligibility') == 'student'][:3]
+                if picks and (self.db.execute("select 1 from subs where user=? and kind='eligibility' and value='student'", (uid,)).fetchone()):
+                    self._queue(uid, '🎒 開學快樂！學生優惠精選：' if zh else '🎒 New term! Student picks:', now, [localize(v, zh) for v in picks], zh)
         self.db.commit()
 
     # ---- sending ----

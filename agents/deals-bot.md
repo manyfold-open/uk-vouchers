@@ -31,5 +31,7 @@ The Narra runtime (`narra/runtime.py`, `narra/quidpaw.py`, `narra/notify.py`) an
 - 「第 2 個不能用」, or 👎 on an offer message in a DM: `POST /api/vouchers/:id/report`, which queues a recheck; the shopper hears the outcome later.
 - Searches that find nothing: `POST /api/demand`, so scouts cover what people ask for; the shopper is offered an alert.
 - 「我是學生」: that group's offers come first in DMs. 「Boots 有新的通知我」, 「收藏第 2 個」, 「我的訂閱」, 「停止通知」.
-- Proactive DMs (opt-in only): new offers for a subscription, a saved offer ending tomorrow, the result of a report. 09:00-21:00 UK time, at most 2 a day, bundled; never in groups.
+- Lists go out as a picture card (`narra/cards/card.mjs`, resvg + Noto Sans TC) plus a short text with the codes and links to copy.
+- 「Boots 7 折以下才通知我」 (alert only above a discount), 「開啟週報」 (Monday picks), 「大促提醒我」 (Black Friday eve, Boxing Day eve, payday).
+- Proactive DMs (opt-in only): new offers for a subscription, a saved offer ending tomorrow or changing its terms, the result of a report, Monday picks, sale eves and payday, student picks at the start of term. 09:00-21:00 UK time, at most 2 a day, bundled; never in groups.
 - Voice calls: two offers spoken, links sent to the chat.

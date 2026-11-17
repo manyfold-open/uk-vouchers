@@ -230,8 +230,27 @@ class Brain:
                     if not who:
                         out['text'] = say('好，之後不再優先列身分優惠。', "Got it, I won't put those first any more."); return out
                     label = say({'student': '學生', 'nhs-blue-light': 'NHS / Blue Light'}[who], {'student': 'student', 'nhs-blue-light': 'NHS / Blue Light'}[who])
-                    lead = say(f'記住了，之後 {label} 優惠會排前面。目前有這些：', f"Noted: {label} offers come first from now on. Here's what's live:")
+                    lead = say(f'記住了，之後 {label} 優惠會排前面。有新的 {label} 優惠要通知你嗎？回「好」就行。目前有這些：',
+                               f"Noted: {label} offers come first from now on. Want a DM when new {label} offers appear? Say \"yes\". Live now:")
+                    out['actions'].append({'pending': {'kind': 'eligibility', 'value': who, 'label': label}})
                     return await self._search(out, {'eligibility': who}, lang, zh, group, ctx, lead=lead)
+            if WEEKLY_OFF.search(t) or SALES_OFF.search(t):
+                which = 'weekly' if WEEKLY_OFF.search(t) else 'sales'
+                out['actions'].append({'unsubscribe': which})
+                out['text'] = say('已關閉每週精選。' if which == 'weekly' else '已關閉大促與發薪日提醒。',
+                                  'Weekly picks off.' if which == 'weekly' else 'Sale and payday reminders off.')
+                return out
+            if WEEKLY_ON.search(t) or (SALES.search(t) and SUBSCRIBE.search(t)):
+                if group:
+                    out['text'] = say('這是個人通知，請私訊我設定 🐾', 'That is a personal alert: set it in a DM 🐾'); return out
+                sub = ({'kind': 'weekly', 'value': 'weekly', 'label': say('每週一精選', 'Monday picks')} if WEEKLY_ON.search(t) else
+                       {'kind': 'sales', 'value': 'sales', 'label': say('大促與發薪日提醒', 'sale and payday reminders')})
+                out['actions'].append({'subscribe': sub})
+                out['text'] = say('好！每週一早上 10 點私訊你 3 個新上架的精選（沒有新的就不打擾）。說「關閉週報」就停。' if sub['kind'] == 'weekly' else
+                                  '好！黑色星期五和 Boxing Day 前一天、還有每月發薪日，早上 10 點私訊你當天最划算的 3 個。說「關閉大促提醒」就停。',
+                                  "Done! Every Monday at 10:00 I'll DM you 3 new picks (nothing new, no message). Say \"weekly off\" to stop." if sub['kind'] == 'weekly' else
+                                  "Done! The day before Black Friday and Boxing Day, and on payday, I'll DM you the 3 best deals at 10:00. Say \"sale alerts off\" to stop.")
+                return out
             if UNSUB.search(t):
                 if group:
                     out['text'] = say('通知是個人的，請私訊我說「停止通知」。', 'Alerts are personal: DM me "stop alerts".'); return out
@@ -256,7 +275,8 @@ class Brain:
                 picked = pick(t, ctx.get('replied') or last.get('offers') or [])
                 if picked:
                     for v in picked:
-                        self_sub = {'kind': 'offer', 'value': v['id'], 'label': f"{v['retailer']}｜{v.get('title', '')}"[:80], 'expires_on': v.get('expires_on')}
+                        self_sub = {'kind': 'offer', 'value': v['id'], 'label': f"{v['retailer']}｜{v.get('title', '')}"[:80], 'expires_on': v.get('expires_on'),
+                                    'fp': fingerprint(v)}
                         out['actions'].append({'subscribe': self_sub})
                     ends = [v['expires_on'] for v in picked if v.get('expires_on')]
                     out['text'] = say('收藏了，到期前一天提醒你 🐾' if ends else '收藏了！這個沒有寫到期日，下架時我會跟你說 🐾',
@@ -265,6 +285,9 @@ class Brain:
                 p = await self.rules(t)
                 q = {k: v for k, v in p.items() if k in ('retailer', 'category', 'eligibility')} or last.get('query') or {}
                 sub = sub_from(q, p)
+                pct = threshold(t)
+                if sub and pct:
+                    sub = {**sub, 'threshold': pct, 'label': sub['label'] + say(f'（省 {pct}% 以上）', f' ({pct}%+ off)')}
                 if not sub:
                     out['text'] = say('要通知哪家店或哪類優惠？例如「Boots 有新的通知我」。', 'Which shop or category? e.g. "notify me about Boots".'); return out
                 return self._subscribe(out, sub, zh, group)
@@ -333,10 +356,14 @@ class Brain:
         if not found:
             out['text'] = (lead + '\n' if lead else '') + say('目前沒有已核對的優惠，晚點再問我看看。', 'No checked offers right now. Try me again later.')
             return out
-        out['offers'] = [{k: v.get(k) for k in ('id', 'retailer', 'title', 'expires_on', 'code')} for v in found]
+        out['offers'] = [{k: v.get(k) for k in ('id', 'retailer', 'title', 'expires_on', 'code', 'min_spend_gbp', 'discount_value')} for v in found]
         if ctx.get('voice'):
             out['text'] = render_voice(found, zh, total); out['full_text'] = render(found, zh, lead, False, page=page); return out
-        out['text'] = render(found, zh, lead, group, suggestions(out, filters, zh, group, identity, limit, page), page=page)
+        tips = suggestions(out, filters, zh, group, identity, limit, page)
+        out['text'] = render(found, zh, lead, group, tips, page=page)
+        # The runtime sends a picture card plus this short text (codes and links to copy); out['text'] is the fallback.
+        out['card'] = {'zh': zh, 'lead': lead or '', 'offers': found}
+        out['card_text'] = render_compact(found, zh, lead, tips)
         return out
 
     def _subscribe(self, out, sub, zh, group):
@@ -365,6 +392,10 @@ class Brain:
         return '這個條件目前沒有已核對的優惠。' if zh else 'Nothing checked matches that right now.'
 
 
+WEEKLY_ON = re.compile(r'(開啟|打開|訂閱|要)\s*(個人)?(每週)?(週報|精選)|weekly (digest|picks)(\s+on)?\b|digest on', re.I)
+WEEKLY_OFF = re.compile(r'(關閉|取消|不要|停止)\s*(個人)?(每週)?(週報|精選)|weekly (digest |picks )?off|digest off', re.I)
+SALES = re.compile(r'大促|黑五|黑色星期五|boxing day|節日|發薪|payday|black friday|sales? (alerts?|reminders?)', re.I)
+SALES_OFF = re.compile(r'(關閉|取消|不要|停止)\s*(大促|發薪|節日)|sales? (alerts?|reminders?) off', re.I)
 MORE = re.compile(r'^\s*(更多|再來|再多一點|下一頁|還有嗎|還有呢|還有其他嗎|more|next|show more|any more)[\s!！。.~?？]*$', re.I)
 REPORT = re.compile(r'不能用|用不了|沒辦法用|沒用|失效|無效|不行用|沒效|過期了|碼錯|doesn.?t work|didn.?t work|not working|invalid|expired|wrong code', re.I)
 SUBSCRIBE = re.compile(r'通知我|提醒我|訂閱|收藏|存起來|有新的?.{0,6}(告訴|通知|跟我說)|notify me|alert me|let me know|remind me|subscribe|save (it|this|that|number)', re.I)
@@ -387,6 +418,22 @@ def pick(text, offers):
         if 1 <= n <= len(offers) and offers[n - 1] not in chosen:
             chosen.append(offers[n - 1])
     return chosen
+
+
+def threshold(text):
+    """「7 折以下」 → 30, 「75 折」 → 25, "40% off or more" → 40; None when no threshold is named."""
+    m = re.search(r'(\d{1,2}(?:\.\d)?)\s*折', text or '')
+    if m:
+        x = float(m.group(1))
+        x = x * 10 if x < 10 else x
+        return int(round(100 - x)) if 0 < x < 100 else None
+    m = re.search(r'(\d{1,2})\s*%', text or '')
+    return int(m.group(1)) if m and 0 < int(m.group(1)) < 100 else None
+
+
+def fingerprint(v):
+    """What a saved offer promises; a change is worth telling the shopper."""
+    return {k: v.get(k) for k in ('code', 'min_spend_gbp', 'discount_value', 'expires_on')}
 
 
 def sub_from(query, plan=None):
@@ -449,7 +496,8 @@ def help_text(zh, group=False):
                  '• 找某家店的碼：「Boots 有什麼碼？」，也可以直接貼商品連結或購物車截圖',
                  '• 找某類優惠：「美妝優惠」「外送折扣」；看下一頁說「更多」',
                  '• 找身分優惠：「學生折扣」；說「我是學生」之後學生優惠都排前面',
-                 '• 新優惠通知：「Boots 有新的通知我」；收藏到期提醒：「收藏第 2 個」',
+                 '• 新優惠通知：「Boots 有新的通知我」「Boots 7 折以下才通知我」；收藏到期提醒：「收藏第 2 個」',
+                 '• 每週一精選：「開啟週報」；大促與發薪日提醒：「大促提醒我」',
                  '• 碼不能用：回覆那則訊息說「第 2 個不能用」，我請人重新確認',
                  '所有優惠都對照過商店官網，但沒有實際結帳測試。']
         if group:
@@ -460,7 +508,8 @@ def help_text(zh, group=False):
              '• A shop\'s codes: "Boots codes", or paste a product link or a basket screenshot',
              '• A category: "beauty deals"; say "more" for the next page',
              '• For a group of people: "student discounts"; say "I\'m a student" to see those first',
-             '• Alerts: "notify me about Boots"; end reminders: "save number 2"',
+             '• Alerts: "notify me about Boots", "Boots 30% off or more"; end reminders: "save number 2"',
+             '• Monday picks: "weekly digest on"; sale and payday reminders: "sale alerts"',
              '• A code failed: reply "number 2 didn\'t work" and I\'ll get it rechecked',
              "Every offer is checked against the shop's own site, not tested at checkout."]
     if group:
@@ -517,6 +566,18 @@ def render(offers, zh, lead=None, group=False, tips=None, page=1):
         foot += ('\n接著可以說：' + '｜'.join(f'「{t}」' for t in tips)) if zh else ('\nNext: ' + ' · '.join(f'"{t}"' for t in tips))
     parts.append(foot)
     return '\n\n'.join(parts)
+
+
+def render_compact(offers, zh, lead=None, tips=None):
+    """Goes under the picture card: what the card cannot do (copy a code, tap a link)."""
+    lines = [lead] if lead else []
+    for i, v in enumerate(offers, 1):
+        code = v.get('code')
+        lines.append(f"{i}. {v['retailer']}　" + ((f'碼：{code}' if zh else f'Code: {code}') if code else ('結帳自動折' if zh else 'no code')))
+        lines.append('   ' + (v.get('offer_url') or v.get('retailer_url', '')))
+    if tips:
+        lines.append(('接著可以說：' + '｜'.join(f'「{t}」' for t in tips)) if zh else ('Next: ' + ' · '.join(f'"{t}"' for t in tips)))
+    return '\n'.join(lines)
 
 
 def render_voice(offers, zh, total):

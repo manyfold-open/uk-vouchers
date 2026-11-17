@@ -98,6 +98,24 @@ async def model(prompt,attachment=None):
     return doc['text']
 
 BRAIN=Brain(http,model,VOUCHERS,logging)
+def upload_request(data,filename):
+    r=Request(HS+'/_matrix/media/v3/upload?'+urlencode({'filename':filename}),data=data,method='POST',
+              headers={'User-Agent':'curl/8.0','Content-Type':'image/png','Authorization':'Bearer '+C['access_token']})
+    with urlopen(r,timeout=45) as f: return json.loads(f.read())
+async def card_image(card):
+    # Offer card PNG by cards/card.mjs (resvg + Noto Sans TC); None when anything goes wrong, so text still goes out.
+    fd,path=tempfile.mkstemp(suffix='.png',dir=ROOT/'media');os.close(fd)
+    try:
+        p=await asyncio.create_subprocess_exec('node',str(ROOT/'cards'/'card.mjs'),path,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+        out,err=await asyncio.wait_for(p.communicate(json.dumps(card,ensure_ascii=False).encode()),25)
+        if p.returncode: logging.warning('Card failed: %s',err.decode(errors='replace')[-200:]); return None
+        info=json.loads(out); data=Path(path).read_bytes()
+        mxc=(await asyncio.to_thread(upload_request,data,'quidpaw-offers.png')).get('content_uri')
+        if not mxc: return None
+        return {'msgtype':'m.image','body':'quidpaw-offers.png','url':mxc,'info':{'mimetype':'image/png','w':info['width'],'h':info['height'],'size':len(data)}}
+    except Exception as e:
+        logging.warning('Card skipped: %s',type(e).__name__); return None
+    finally: Path(path).unlink(missing_ok=True)
 async def send_text(room,body,user=None,offers=None):
     r=await send(room,'m.room.message',{'msgtype':'m.text','body':body},'push-'+hashlib.sha256((room+body+str(time.time())).encode()).hexdigest())
     if offers:  # so 「收藏第 1 個」 or 「第 2 個不能用」 after a push points at the pushed offers
@@ -152,7 +170,8 @@ async def apply(actions,room,user,result):
         elif 'subscribe' in a:
             sub=a['subscribe']
             DB.execute('insert into users(user,room,notify) values(?,?,1) on conflict(user) do update set room=excluded.room, notify=1',(user,room))
-            DB.execute('insert or replace into subs(user,kind,value,label,expires_on,reminded,created) values(?,?,?,?,?,0,?)',(user,sub['kind'],sub['value'],sub['label'],sub.get('expires_on'),time.time()))
+            DB.execute('insert or replace into subs(user,kind,value,label,expires_on,reminded,created,threshold,fp) values(?,?,?,?,?,0,?,?,?)',
+                       (user,sub['kind'],sub['value'],sub['label'],sub.get('expires_on'),time.time(),sub.get('threshold'),json.dumps(sub['fp']) if sub.get('fp') else None))
         elif 'unsubscribe' in a:
             v=a['unsubscribe']
             if v: DB.execute('delete from subs where user=? and value=?',(user,v))
@@ -200,6 +219,14 @@ async def _reply(room,event,context,attachment=None):
         if group and not st['welcomed'] and not voice:
             set_room(room,welcomed=1); body=body+'\n\n'+group_intro(zh)
         if voice and ((voice['rtc_session_id'],voice['turn_id']) in CANCELLED or VOICE.get(room,{}).get('turn')!=voice['turn_id']):return
+        if result and result.get('card') and not voice:
+            image=await card_image(result['card'])
+            if image:
+                if group: image['m.relates_to']={'m.in_reply_to':{'event_id':eid}}
+                r=await send(room,'m.room.message',image,'card-'+hashlib.sha256(eid.encode()).hexdigest())
+                body=result['card_text']+(('\n\n'+group_intro(zh)) if group and body.endswith(group_intro(zh)) else '')
+                if r.get('event_id'):  # a reply or 👎 on the picture means its offers too
+                    DB.execute('insert or replace into shown values(?,?,?,?,?,?,?,?,?)',('card-'+eid,r['event_id'],room,user,json.dumps(result.get('offers') or []),None,1,len(result.get('offers') or []),time.time()-1));DB.commit()
         payload={'msgtype':'m.text','body':body}
         if group and not voice:payload['m.relates_to']={'m.in_reply_to':{'event_id':eid}}  # thread under the asker in busy groups
         if voice:payload['ai.netmind.rtc.voice_reply']={k:voice[k] for k in ('rtc_session_id','turn_id')}
