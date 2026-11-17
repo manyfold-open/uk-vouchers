@@ -21,7 +21,7 @@ const fields = `| Field | Required | What to put |
 | category | yes | ${CATEGORIES.join(', ')} |
 | eligibility | yes | ${ELIGIBILITY.join(', ')} |
 | starts_on, expires_on | no | YYYY-MM-DD, only when the page states them. Never guess an end date |
-| offer_url | yes | The retailer's page for this offer |
+| offer_url | yes | The most specific page where a shopper can use the offer: the promotion, sale or category page the banner links to. Use the home page only when the offer appears nowhere else |
 | terms_en, terms_zh | no | Exclusions and limits the page states, in English and Traditional Chinese |
 | source_type | yes | ${SOURCE_TYPES.join(', ')} |`;
 
