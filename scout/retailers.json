@@ -257,11 +257,6 @@
    "category": "kids"
   },
   {
-   "name": "Lush UK",
-   "url": "https://www.lush.com/uk/en",
-   "category": "beauty"
-  },
-  {
    "name": "Elemis",
    "url": "https://uk.elemis.com",
    "category": "beauty"
@@ -307,16 +302,6 @@
    "category": "fashion"
   },
   {
-   "name": "White Stuff",
-   "url": "https://www.whitestuff.com",
-   "category": "fashion"
-  },
-  {
-   "name": "Seasalt Cornwall",
-   "url": "https://www.seasaltcornwall.com",
-   "category": "fashion"
-  },
-  {
    "name": "Boden UK",
    "url": "https://www.boden.co.uk",
    "category": "fashion"
@@ -339,16 +324,6 @@
   {
    "name": "Superdry UK",
    "url": "https://www.superdry.com",
-   "category": "fashion"
-  },
-  {
-   "name": "Schuh",
-   "url": "https://www.schuh.co.uk",
-   "category": "fashion"
-  },
-  {
-   "name": "Clarks UK",
-   "url": "https://www.clarks.com/en-gb",
    "category": "fashion"
   },
   {
@@ -427,11 +402,6 @@
    "category": "home"
   },
   {
-   "name": "Robert Dyas",
-   "url": "https://www.robertdyas.co.uk",
-   "category": "home"
-  },
-  {
    "name": "B&Q",
    "url": "https://www.diy.com",
    "category": "home"
@@ -445,16 +415,6 @@
    "name": "Lakeland",
    "url": "https://www.lakeland.co.uk",
    "category": "home"
-  },
-  {
-   "name": "Very",
-   "url": "https://www.very.co.uk",
-   "category": "electronics"
-  },
-  {
-   "name": "Box.co.uk",
-   "url": "https://www.box.co.uk",
-   "category": "electronics"
   },
   {
    "name": "Laptops Direct",
@@ -507,24 +467,9 @@
    "category": "travel"
   },
   {
-   "name": "Domino's UK",
-   "url": "https://www.dominos.co.uk",
-   "category": "food-delivery"
-  },
-  {
-   "name": "Pizza Hut UK",
-   "url": "https://www.pizzahut.co.uk",
-   "category": "food-delivery"
-  },
-  {
    "name": "Papa John's UK",
    "url": "https://www.papajohns.co.uk",
    "category": "food-delivery"
-  },
-  {
-   "name": "Smyths Toys",
-   "url": "https://www.smythstoys.com/uk/en-gb",
-   "category": "kids"
   },
   {
    "name": "The Entertainer",
@@ -540,11 +485,6 @@
    "name": "Hamleys",
    "url": "https://www.hamleys.com",
    "category": "kids"
-  },
-  {
-   "name": "Decathlon UK",
-   "url": "https://www.decathlon.co.uk",
-   "category": "sports"
   },
   {
    "name": "Gymshark UK",
@@ -587,11 +527,6 @@
    "category": "other"
   },
   {
-   "name": "Waterstones",
-   "url": "https://www.waterstones.com",
-   "category": "other"
-  },
-  {
    "name": "Hobbycraft",
    "url": "https://www.hobbycraft.co.uk",
    "category": "other"
@@ -605,6 +540,136 @@
    "name": "Photobox",
    "url": "https://www.photobox.co.uk",
    "category": "other"
+  },
+  {
+   "name": "Matalan",
+   "url": "https://www.matalan.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Accessorize",
+   "url": "https://uk.accessorize.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Phase Eight",
+   "url": "https://www.phase-eight.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Hobbs",
+   "url": "https://www.hobbs.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Oasis",
+   "url": "https://www.oasis-stores.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Karen Millen",
+   "url": "https://www.karenmillen.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Debenhams",
+   "url": "https://www.debenhams.com",
+   "category": "other"
+  },
+  {
+   "name": "Dorothy Perkins",
+   "url": "https://www.dorothyperkins.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Burton",
+   "url": "https://www.burton.co.uk",
+   "category": "fashion"
+  },
+  {
+   "name": "Lounge Underwear",
+   "url": "https://loungeunderwear.com",
+   "category": "fashion"
+  },
+  {
+   "name": "Neal's Yard Remedies",
+   "url": "https://www.nealsyardremedies.com",
+   "category": "beauty"
+  },
+  {
+   "name": "The Perfume Shop",
+   "url": "https://www.theperfumeshop.com",
+   "category": "beauty"
+  },
+  {
+   "name": "Fragrance Direct",
+   "url": "https://www.fragrancedirect.co.uk",
+   "category": "beauty"
+  },
+  {
+   "name": "Bloom & Wild",
+   "url": "https://www.bloomandwild.com",
+   "category": "other"
+  },
+  {
+   "name": "Hotel Chocolat",
+   "url": "https://www.hotelchocolat.com/uk",
+   "category": "grocery"
+  },
+  {
+   "name": "Oliver Bonas",
+   "url": "https://www.oliverbonas.com",
+   "category": "home"
+  },
+  {
+   "name": "Screwfix",
+   "url": "https://www.screwfix.com",
+   "category": "home"
+  },
+  {
+   "name": "Halfords",
+   "url": "https://www.halfords.com",
+   "category": "other"
+  },
+  {
+   "name": "Emma Mattress",
+   "url": "https://www.emma-sleep.co.uk",
+   "category": "home"
+  },
+  {
+   "name": "SMARTY",
+   "url": "https://smarty.co.uk",
+   "category": "electronics"
+  },
+  {
+   "name": "Premier Inn",
+   "url": "https://www.premierinn.com/gb/en/home.html",
+   "category": "travel"
+  },
+  {
+   "name": "Travelodge",
+   "url": "https://www.travelodge.co.uk",
+   "category": "travel"
+  },
+  {
+   "name": "Eurostar",
+   "url": "https://www.eurostar.com/uk-en",
+   "category": "travel"
+  },
+  {
+   "name": "Jet2holidays",
+   "url": "https://www.jet2holidays.com",
+   "category": "travel"
+  },
+  {
+   "name": "Mountain Warehouse",
+   "url": "https://www.mountainwarehouse.com",
+   "category": "sports"
+  },
+  {
+   "name": "Cotswold Outdoor",
+   "url": "https://www.cotswoldoutdoor.com",
+   "category": "sports"
   }
  ]
 }

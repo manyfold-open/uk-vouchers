@@ -33,7 +33,7 @@ cron every 15 min: release leases · expire by date · queue daily rechecks
 | `src/verify.ts` | verifier 任務、判定、每日重檢 / tasks, verdicts, rechecks |
 | `src/skill.ts` | agent 讀的 SKILL.md / agent instructions |
 | `src/index.ts` | Worker 路由 / routes |
-| `scout/retailers.json` | 51 家英國零售商起始清單 / starting watchlist |
+| `scout/retailers.json` | 英國零售商清單（134 家，都經過 sandbox 可連線測試） / starting watchlist |
 | `scout/extract.ts`, `scout/scan.ts` | 抓取工具：找出頁面上的碼與優惠句 / page extractor and watchlist scanner |
 
 ## 開發 / Develop
