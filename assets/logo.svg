@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512">
+  <title>UK Deals 英國省錢小幫手</title>
+  <rect width="100" height="100" rx="24" fill="#1F3A5F"/>
+  <rect x="16" y="32" width="64" height="42" rx="6" fill="#FFFFFF"/>
+  <circle cx="16" cy="53" r="7" fill="#1F3A5F"/>
+  <circle cx="80" cy="53" r="7" fill="#1F3A5F"/>
+  <text x="48" y="64" text-anchor="middle" font-size="28" font-weight="500" fill="#E4572E"
+        font-family="PingFang TC, Noto Sans TC, Microsoft JhengHei, sans-serif">省</text>
+  <circle cx="78" cy="30" r="14" fill="#2E7D5B" stroke="#1F3A5F" stroke-width="3"/>
+  <path d="M71 30 L76 35 L85 25" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
