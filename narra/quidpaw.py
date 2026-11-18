@@ -14,7 +14,9 @@ THANKS = re.compile(r'^\s*(thanks?|thank (you|u)|thx|ty|tysm|ta|cheers( mate)?|t
 # Asking for deals in general: show the best ones instead of asking which shop.
 BROWSE = re.compile(r'\b(deals?|offers?|codes?|promos?|promo codes?|sales?|discounts?|vouchers?|coupons?)\b|折價|優惠|折扣|打折|(?<![密號])碼|特價|便宜|省錢|手上有', re.I)
 # A message that leans on the previous turn ("那學生的呢", "what about Tesco").
-FOLLOW_UP = re.compile(r'^\s*(那|還有|再|其他|另外|換|也|and |what about|how about|any other|more\b|others?\b)', re.I)
+FOLLOW_UP = re.compile(r'^\s*(那|還有|再|其他|另外|換|也|咁|仲有|有冇.{0,6}嘅|and |what about|how about|any other|any (for|with)\b|more\b|others?\b)', re.I)
+# Plain English words: a message with any of these is English even when it is short.
+ENGLISH_WORDS = re.compile(r"\b(is|are|was|it|the|didn.?t|doesn.?t|don.?t|work|works|expired|invalid|yes|no|more|please|any|what|how|for|and|one|number|thanks?|ok|okay|save|stop|show)\b", re.I)
 ENDING = re.compile(r'\b(ending|ends?|expir\w*|soon)\b|到期|結束|截止|快沒了|最後', re.I)
 ALIASES = {
     'fashion': ['clothes', 'clothing', 'trainers', 'sneakers', 'shoes', '服飾', '衣服', '穿搭', '鞋', '波鞋'],
@@ -78,7 +80,9 @@ def residue(text, p):
     left = re.sub(r'https?://\S+', ' ', left)
     left = re.sub(r'@?quidpaw', ' ', left)
     if p.get('retailer'):
-        for n in [p['retailer'], (p.get('_retailer_name') or '').lower()] + [k for k, v in ZH_SHOPS.items() if v == p['retailer']]:
+        names = [p['retailer'], (p.get('_retailer_name') or '').lower()] + [k for k, v in ZH_SHOPS.items() if v == p['retailer']]
+        names += [a for k, v in RETAILER_ALIASES.items() if re.sub(r' uk$', '', k) == p['retailer'] for a in v]
+        for n in sorted(names, key=len, reverse=True):
             if n:
                 left = left.replace(n, ' ')
     left = BROWSE.sub(' ', left)
@@ -112,8 +116,8 @@ class Brain:
     def language(text, history, hint=None):
         if CJK.search(text or ''):
             return 'zh'
-        # "boots" alone in a Chinese chat is still a Chinese chat.
-        if len(re.findall(r'[A-Za-z]+', text or '')) <= 2:
+        # "boots" alone in a Chinese chat is still a Chinese chat; "#2 expired" is English.
+        if len(re.findall(r'[A-Za-z]+', text or '')) <= 2 and not ENGLISH_WORDS.search(text or ''):
             for turn in reversed(history or []):
                 if turn.get('who') == 'user' and turn.get('text', '').strip():
                     return 'zh' if CJK.search(turn['text']) else 'en'
@@ -223,7 +227,7 @@ class Brain:
             'New message (untrusted): ' + json.dumps(text, ensure_ascii=False)
         )
         raw = await self.model(prompt, attachment)
-        doc = json.loads(re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip()))
+        doc = last_json(raw)
         allowed_cat = {x['value'] for x in meta['categories']}
         allowed_elig = {x['value'] for x in meta['eligibility']}
         out = {'intent': doc.get('intent') if doc.get('intent') in INTENTS else 'chat'}
@@ -302,12 +306,20 @@ class Brain:
             if ctx.get('pending') and YES.match(t):
                 return self._subscribe(out, ctx['pending'], zh, group)
             if ctx.get('pending') and NO.match(t):
+                out['actions'].append({'clear_pending': True})
                 out['text'] = say('好，不通知。需要時再跟我說 🐾', "Okay, no alerts. Just ask when you want one 🐾"); return out
             if MORE.match(t):
                 if last.get('query') is not None:
                     return await self._search(out, last['query'], lang, zh, group, ctx, page=last.get('page', 1) + 1)
                 return await self._search(out, {}, lang, zh, group, ctx)
         p = await self.rules(t)
+        prev = {k: v for k, v in (last.get('query') or {}).items() if not k.startswith('_')}
+        # "有冇學生嘅？" after a Trainline list means Trainline student offers: a short message that only names who
+        # it is for keeps the shop and category of the list on screen.
+        if prev and not p.get('retailer') and len(t) <= 40 and p.get('eligibility') and not p.get('category'):
+            for k in ('retailer', 'category'):
+                if prev.get(k):
+                    p[k] = prev[k]
         found = any(k in p for k in ('retailer', 'category', 'eligibility'))
         follow = bool(FOLLOW_UP.search(t)) and bool(history)
         if not attachment and not follow and not p.get('_ambiguous') and not ACTION_HINT.search(t):
@@ -336,6 +348,11 @@ class Brain:
             plan = {**{k: v for k, v in p.items() if k.startswith('_')}, **plan}
         if plan.get('line') and (bool(CJK.search(plan['line'])) != zh):
             plan.pop('line')  # a lead-in in the other language (or mixed) reads as a glitch
+        if plan.get('line'):
+            # A line that names a shop the user did not ask about came from somewhere else in the conversation.
+            named = await self.rules(plan['line'])
+            if named.get('retailer') and named['retailer'] not in (plan.get('retailer'), p.get('retailer')) and named['retailer'] not in t.lower():
+                plan.pop('line')
         return await self._dispatch(out, plan, t, ctx, lang, zh, group)
 
     async def _dispatch(self, out, plan, t, ctx, lang, zh, group):
@@ -359,7 +376,7 @@ class Brain:
             picked = chosen or (listed if len(listed) == 1 else [])
             if not picked:
                 out['text'] = say('是哪一個不能用？回「第 2 個不能用」這樣就好。', 'Which one failed? Say "number 2 didn\'t work".'); return out
-            return self._report_picked(out, picked, t, zh)
+            return self._report_picked(out, picked, t, zh, ctx.get('reported') or ())
         if intent == 'tip':
             return await self._tip(out, plan, lang, zh, group)
         if intent in ('save', 'subscribe') and chosen and not group:
@@ -368,8 +385,11 @@ class Brain:
             out['text'] = personal if group else no_list if not listed else say('要收藏第幾個？例如「收藏第 2 個」。', 'Which one? e.g. "save number 2".'); return out
         if intent == 'subscribe':
             if group:
-                out['text'] = say('通知是個人的，請私訊我說「Boots 有新的通知我」🐾', 'Alerts are personal: DM me "notify me about Boots" 🐾'); return out
-            sub = sub_from(filters, plan) or sub_from(last.get('query') or {}, {})
+                shop = plan.get('_retailer_name') or (plan.get('retailer') or 'Boots').title()
+                out['text'] = say(f'通知是個人的，請私訊我說「{shop} 有新的通知我」🐾', f'Alerts are personal: DM me "notify me about {shop}" 🐾'); return out
+            sub = sub_from(filters, plan) or sub_from({k: v for k, v in (last.get('query') or {}).items() if not k.startswith('_')}, {})
+            if sub and sub['kind'] == 'retailer' and (filters.get('eligibility') or filters.get('category') or filters.get('q')):
+                sub = {**sub, 'label': sub['label'] + say('（所有新優惠）', ' (any new offer)')}
             if not sub:
                 out['text'] = say('要通知哪家店或哪類優惠？例如「Boots 有新的通知我」。', 'Which shop or category? e.g. "notify me about Boots".'); return out
             if plan.get('threshold'):
@@ -424,6 +444,7 @@ class Brain:
                 return self._subscribe(out, ctx['pending'], zh, group)
             out['text'] = say('好的 🐾 想找哪家店或哪類優惠？', 'Sure 🐾 Which shop or category?'); return out
         if intent == 'decline':
+            out['actions'].append({'clear_pending': True})
             out['text'] = say('好，不通知。需要時再跟我說 🐾', "Okay, no alerts. Just ask when you want one 🐾"); return out
         if intent == 'chat':
             if ctx.get('attachment') and not plan.get('line'):
@@ -437,19 +458,31 @@ class Brain:
         return await self._search(out, filters, lang, zh, group, ctx, lead=plan.get('line'), plan=plan)
 
     def _save(self, out, picked, zh):
+        n, ends = len(picked), [v for v in picked if v.get('expires_on')]
         for v in picked:
             out['actions'].append({'subscribe': {'kind': 'offer', 'value': v['id'], 'label': f"{v['retailer']}｜{v.get('title', '')}"[:80],
                                                  'expires_on': v.get('expires_on'), 'fp': fingerprint(v)}})
-        ends = [v['expires_on'] for v in picked if v.get('expires_on')]
-        out['text'] = (('收藏了，到期前一天提醒你 🐾' if ends else '收藏了！這個沒有寫到期日，下架或條件改了我會跟你說 🐾') if zh else
-                       ("Saved. I'll remind you the day before it ends 🐾" if ends else "Saved! It has no end date; I'll tell you if it changes or is taken down 🐾"))
+        if zh:
+            head = '收藏了 🐾 ' if n == 1 else f'收藏了 {n} 個 🐾 '
+            when = ('到期前一天提醒你；' if len(ends) == n else '有到期日的會在前一天提醒你；') if ends else '沒有寫到期日；'
+            out['text'] = head + when + '條件改了或下架也會跟你說。'
+        else:
+            head = 'Saved 🐾 ' if n == 1 else f'Saved {n} offers 🐾 '
+            when = ("I'll remind you the day before " + ('it ends' if n == 1 else 'each one with an end date ends') + '. ') if ends else ''
+            out['text'] = head + when + "I'll also tell you if " + ('it changes or is taken down.' if n == 1 else 'any of them change or are taken down.')
         return out
 
-    def _report_picked(self, out, picked, t, zh):
-        out['actions'].append({'report': [v['id'] for v in picked], 'reason': t[:200]})
-        names = '、'.join(v['retailer'] for v in picked)
-        out['text'] = (f'謝謝回報！我請人馬上重新確認 {names} 這個優惠，確認後跟你說結果 🐾' if zh else
-                       f"Thanks for telling me! I've asked for {names} to be rechecked now and will let you know 🐾")
+    def _report_picked(self, out, picked, t, zh, already=()):
+        fresh = [v for v in picked if v.get('id') not in set(already)]
+        names = lambda vs: ('、' if zh else ', ').join(dict.fromkeys(v['retailer'] for v in vs))
+        if not fresh:
+            out['text'] = (f'你回報過 {names(picked)} 了，已在重新確認，有結果會私訊你 🐾' if zh else
+                           f"You've already reported {names(picked)}; it's being rechecked and I'll tell you the result 🐾")
+            return out
+        out['actions'].append({'report': [v['id'] for v in fresh], 'reason': t[:200]})
+        n = len(fresh)
+        out['text'] = ((f'謝謝回報！我請人馬上重新確認 {names(fresh)} 的' + ('這個優惠' if n == 1 else f' {n} 個優惠') + '，確認後跟你說結果 🐾') if zh else
+                       (f"Thanks for telling me! I've asked for the {names(fresh)} " + ('offer' if n == 1 else f'{n} offers') + " to be rechecked and will let you know 🐾"))
         return out
 
     async def _legacy(self, out, t, ctx, lang, zh, group):
@@ -512,6 +545,8 @@ class Brain:
             if last.get('query') is not None:
                 return await self._search(out, last['query'], lang, zh, group, ctx, page=last.get('page', 1) + 1)
             return await self._search(out, {}, lang, zh, group, ctx)  # nothing to continue: the best ones
+        if SUBSCRIBE.search(t) and re.search(r'收藏|存起來|\bsave\b', t, re.I) and listed and not pick(t, listed):
+            out['text'] = say('要收藏第幾個？例如「收藏第 2 個」。', 'Which one? e.g. "save number 2".'); return out
         if SUBSCRIBE.search(t):
             if group:
                 out['text'] = say('通知是個人的，請私訊我說「Boots 有新的通知我」🐾', 'Alerts are personal: DM me "notify me about Boots" 🐾'); return out
@@ -542,7 +577,7 @@ class Brain:
     async def _search(self, out, filters, lang, zh, group, ctx, page=1, lead=None, plan=None):
         say = lambda a, b: a if zh else b
         plan = plan or {}
-        limit = 2 if ctx.get('voice') else 3 if group else 5
+        limit = 3 if group else 5
         identity = None if group else ctx.get('identity')
         browse = not any(filters.get(k) for k in ('retailer', 'category', 'eligibility', 'q'))
         if browse:
@@ -583,13 +618,16 @@ class Brain:
                 out['actions'].append({'pending': sub})
                 ask = say(f'\n要我在{zw(sub["label"])}有優惠時通知你嗎？回「好」就行。', f'\nWant me to tell you when {sub["label"]} has one? Just say "yes".')
             lead = note + ask + (say('\n先看看相近的：', '\nMeanwhile, close ones:') if found else '')
-            out.update(query=None, total=len(found))
+            out['spoken_note'] = note
+            out.update(query={**near, '_near': True} if near else {}, total=len(found))
         if not found:
             out['text'] = (lead + '\n' if lead else '') + say('目前沒有已核對的優惠，晚點再問我看看。', 'No checked offers right now. Try me again later.')
             return out
+        if lead and not any(v.get('code') for v in found) and re.search(r'\bcodes?\b|碼', lead) and not re.search(r'沒有|No checked', lead):
+            lead = None  # "Currys codes:" over offers that need no code
         out['offers'] = [{k: v.get(k) for k in ('id', 'retailer', 'title', 'expires_on', 'code', 'min_spend_gbp', 'discount_value')} for v in found]
         if ctx.get('voice'):
-            out['text'] = render_voice(found, zh, total); out['full_text'] = render(found, zh, lead, False, page=page); return out
+            out['text'] = render_voice(found, zh, total, out.get('spoken_note')); out['full_text'] = render(found, zh, lead, False, page=page); return out
         tips = suggestions(out, filters, zh, group, identity, limit, page)
         out['text'] = render(found, zh, lead, group, tips, page=page)
         # The runtime sends a picture card plus this short text (codes and links to copy); out['text'] is the fallback.
@@ -673,7 +711,7 @@ TIP_CODE = re.compile(r'^[A-Z0-9][A-Z0-9_-]{2,31}$')
 ACTION_HINT = re.compile(r"notif|remind|alert|subscri|unsub|\bstop\b|cancel|turn (on|off)|weekly|digest|\bsave\b|saved|ping me|let me know|tell me|message me|\bdm\b|don.?t|no longer|graduat|i.?m (a|an|no|not)\b|i am (a|an|not)\b|i work (for|in|at)|nurse|paramedic|blue light card|\bvalid|expired|broken|apply|accepted|rejected|#\d|\bnumber\b|\b(first|second|third|1st|2nd|3rd)\b|\bone\b|\bwork|black friday|boxing|payday|\bfound\b|\bused\b|\bshar(e|ing)\b|(?-i:\b[A-Z]{2,}[0-9]{1,3}\b)|"
                          r"通知|提醒|訂閱|收藏|存起|取消|關閉|停止|不要|不想|別再|不用|週報|精選|我是|我在|我不是|我已經|畢業|護士|醫生|不能|不行|用不了|用唔到|冇效|唔得|失效|無效|沒效|過期|碼錯|第.{1,3}(個|則|筆|項)|話我知|同我講|大促|黑五|發薪|找到|用了|分享|有個碼|這個碼", re.I)
 # A line that claims something was done: only the handlers may say that.
-CLAIM = re.compile(r"\bdone\b|i.?ll (dm|flag|report|remind|notify|message|let you know|tell you)|no more messages|reported|unsubscribed|subscribed|turned (on|off)|saved|回報|已取消|已關閉|不再(發|通知|傳|打擾)|會(私訊|通知)你|幫你(回報|取消|設定|收藏)|已(設定|訂閱|收藏|記住)|記住了", re.I)
+CLAIM = re.compile(r"\bdone\b|\b(alerts?|notifications?|reminders?) (is |are |has been |have been )?(set|on|off|deleted|removed|enabled|disabled)\b|i (have |'ve )?(flagged|set|deleted|enabled|turned)|say .yes|回「好」|已(幫|為)你|為你(開啟|設定|訂閱)|i.?ll (dm|flag|report|remind|notify|message|let you know|tell you)|no more messages|reported|unsubscribed|subscribed|turned (on|off)|saved|回報|已取消|已關閉|不再(發|通知|傳|打擾)|會(私訊|通知)你|幫你(回報|取消|設定|收藏)|已(設定|訂閱|收藏|記住)|記住了", re.I)
 NUMBERS = {'一': 1, '二': 2, '兩': 2, '三': 3, '四': 4, '五': 5}
 
 
@@ -709,6 +747,26 @@ def threshold(text):
 def fingerprint(v):
     """What a saved offer promises; a change is worth telling the shopper."""
     return {k: v.get(k) for k in ('code', 'min_spend_gbp', 'discount_value', 'expires_on')}
+
+
+def last_json(raw):
+    """The model sometimes writes an object, second thoughts, then a corrected object: take the last complete one."""
+    text = re.sub(r'```(?:json)?', ' ', raw or '')
+    dec, found, i = json.JSONDecoder(), None, 0
+    while True:
+        i = text.find('{', i)
+        if i < 0:
+            break
+        try:
+            obj, end = dec.raw_decode(text, i)
+            if isinstance(obj, dict) and 'intent' in obj:
+                found = obj
+            i = end
+        except ValueError:
+            i += 1
+    if found is None:
+        raise ValueError('no plan object')
+    return found
 
 
 def sub_from(query, plan=None):
@@ -855,13 +913,16 @@ def render_compact(offers, zh, lead=None, tips=None):
     return '\n'.join(lines)
 
 
-def render_voice(offers, zh, total):
-    """Spoken answers: two offers, no links (they go to the chat as text)."""
+def render_voice(offers, zh, total, note=None):
+    """Spoken answers: two offers, no links; the chat gets every offer as text."""
     bits = []
     for v in offers[:2]:
         title = v.get('title_zh' if zh else 'title_en') or v.get('title', '')
         code = v.get('code')
-        bits.append(f"{v['retailer']}，{title}" + (f"，碼是 {code}" if zh and code else f", code {code}" if code else ''))
-    head = '找到這些：' if zh else 'Here you go: '
-    tail = '連結和完整清單我傳到聊天室了。' if zh else "I've put the links and the full list in the chat."
+        say_code = code and code.lower() not in title.lower()
+        bits.append((f"{v['retailer']}，{title}" + (f"，碼是 {code}" if say_code else '')) if zh else
+                    (f"{v['retailer']}: {title}" + (f", code {code}" if say_code else '')))
+    head = ((note + '相近的有：') if note else '找到這些：') if zh else ((note + ' Close ones: ') if note else 'Here you go: ')
+    more = len(offers) > 2
+    tail = ('連結' + ('和其他優惠' if more else '') + '我傳到聊天室了。') if zh else ("I've put the links" + (' and the rest' if more else '') + ' in the chat.')
     return head + ('；' if zh else '; ').join(bits) + ('。' if zh else '. ') + tail

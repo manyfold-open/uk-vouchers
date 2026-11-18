@@ -73,12 +73,13 @@ async def history(room,before_eid,limit=8):
         if e.get('event_id')==before_eid or e.get('type')!='m.room.message': continue
         body=e.get('content',{}).get('body')
         if not isinstance(body,str) or not body.strip(): continue
-        turns.append({'who':'bot' if e.get('sender')==USER else 'user','text':clean(body)[:300]})
+        turns.append({'who':'bot' if e.get('sender')==USER else 'user','sender':e.get('sender'),'text':clean(body)[:300]})
         if len(turns)>=limit: break
     return list(reversed(turns))
 def clean(body):
     lines=[l for l in body.split('\n') if not l.startswith('> ')]  # drop quoted reply fallback
-    return NAME.sub(' ',' '.join(lines).replace(USER,' ')).strip()[:1000]
+    t=NAME.sub(' ',' '.join(lines).replace(USER,' ')).strip()
+    return t if len(t)<=1000 else t[:300]+' … '+t[-700:]  # the ask is usually at the end of a long message
 async def cli(*args):
     p=await asyncio.create_subprocess_exec('npx','--yes','@narra-im/narra-cli@latest',*args,'--endpoint',API,'--token-file',str(PRIVATE/'agent-runtime-token'),cwd=WORK,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL)
     try: out,_=await asyncio.wait_for(p.communicate(),90)
@@ -128,6 +129,12 @@ def called(room,content):
     # Narra counts only m.mentions and replies to the agent's own messages, never a name typed in the text.
     ref=content.get('m.relates_to',{}).get('m.in_reply_to',{}).get('event_id')
     return USER in content.get('m.mentions',{}).get('user_ids',[]) or bool(ref and DB.execute('select 1 from own where id=?',(ref,)).fetchone())
+def aimed_elsewhere(content):
+    # Mentions someone else first and Quidpaw only later: talk about the bot, not to it.
+    others=[u for u in content.get('m.mentions',{}).get('user_ids',[]) if u!=USER]
+    body=(content.get('body') or '').lstrip().lower()
+    if not others or not body.startswith('@'): return False
+    return not re.match(r'@?(quidpaw|'+re.escape(USER.lower())+r')\b',body)
 def reporter(user): return 'narra:'+hashlib.sha256(user.encode()).hexdigest()[:16]
 
 async def authorize(room,event,members,mentioned):
@@ -193,7 +200,8 @@ async def apply(actions,room,user,result):
         elif 'demand' in a and a['demand']:
             try: await http(VOUCHERS+'/api/demand',a['demand'])
             except Exception: pass  # best effort
-    if not any('pending' in a for a in actions):
+    # A yes/no question stays open (1 h) until answered, declined or replaced; other messages in between do not cancel it.
+    if any('clear_pending' in a or ('subscribe' in a and a['subscribe'].get('kind')!='offer') for a in actions) and not any('pending' in a for a in actions):
         DB.execute('delete from pending_sub where room=? and user=?',(room,user))
     DB.commit()
 async def reply(room,event,context,attachment=None):
@@ -211,7 +219,10 @@ async def _reply(room,event,context,attachment=None):
         cmd=command(room,text,zh) if group else None
         if cmd is None:
             ctx=context_for(room,user,group,content)
-            ctx.update(history=await history(room,eid),attachment=attachment,lang=lang,voice=bool(voice))
+            past=await history(room,eid)
+            if group: past=[x for x in past if x['who']=='bot' or x.get('sender')==user]  # only this person's side of a busy group
+            ctx.update(history=past,attachment=attachment,lang=lang,voice=bool(voice),
+                       reported=[r[0] for r in DB.execute('select voucher_id from reports where user=? and resolved=0',(user,)).fetchall()])
             result=await BRAIN.respond(text,ctx)
             result['reported_from']=ctx.get('replied') or (ctx.get('last') or {}).get('offers')
             if not group: NOTIFIER.remember_user(user,room,'zh' if re.search('[\u3400-\u9fff]',result['text']) else 'en')
@@ -266,7 +277,9 @@ async def reaction(room,event,members):
     offers=(seen or {}).get('offers') or []
     user=event.get('sender','')
     u=NOTIFIER.user(user) or {}; zh=u.get('lang')!='en'
-    if len(offers)==1:
+    if len(offers)==1 and DB.execute('select 1 from reports where user=? and voucher_id=? and resolved=0',(user,offers[0]['id'])).fetchone():
+        body=f"你回報過 {offers[0]['retailer']} 了，已在重新確認 🐾" if zh else f"You've already reported {offers[0]['retailer']}; it's being rechecked 🐾"
+    elif len(offers)==1:
         await apply([{'report':[offers[0]['id']],'reason':'thumbs down'}],room,user,{'reported_from':offers})
         body=f"謝謝回報！我請人重新確認 {offers[0]['retailer']} 這個優惠 🐾" if zh else f"Thanks! I've asked for {offers[0]['retailer']} to be rechecked 🐾"
     elif offers:
@@ -298,6 +311,7 @@ async def handle(room,event,members):
     mention=called(room,c)
     auth=await authorize(room,event,members,mention)
     group=auth.get('roomKind')!='dm' if auth.get('roomKind') else len(members)!=2
+    if group and not rtc and aimed_elsewhere(c):return
     if auth.get('allow') is not True:
         notice=auth.get('notice',{})
         if notice.get('send') is True and notice.get('text'):
