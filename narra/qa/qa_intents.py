@@ -100,6 +100,11 @@ CASES = [
     ('what am i subscribed to', N, 'mysubs', {}),
     ('show me the weekly picks', N, {'browse'}, {}),
     ('weekly digest on pls', N, 'weekly_on', {}),
+    ('daily picks on', N, 'daily_on', {}),
+    ('stop the daily picks', N, 'daily_off', {}),
+    ('開啟每日精選', N, 'daily_on', {}),
+    ('每日精選不要了', N, 'daily_off', {}),
+    ('今天的精選', N, {'browse'}, {}),
     # --- shopper tips ---
     ('I used SAVE15 at boots, 15% off', N, 'tip', {}),
     ('BOOTS10 works at boots', N, 'tip', {}),
@@ -188,10 +193,10 @@ def classify(out):
         if 'tip' in a: return 'tip', a
         if 'unsubscribe' in a:
             v = a['unsubscribe']
-            return {'weekly': 'weekly_off', 'sales': 'sales_off'}.get(v, 'unsubscribe'), a
+            return {'weekly': 'weekly_off', 'daily': 'daily_off', 'sales': 'sales_off'}.get(v, 'unsubscribe'), a
         if 'subscribe' in a:
             k = a['subscribe']['kind']
-            return {'weekly': 'weekly_on', 'sales': 'sales_on'}.get(k, 'subscribe'), a
+            return {'weekly': 'weekly_on', 'daily': 'daily_on', 'sales': 'sales_on'}.get(k, 'subscribe'), a
     t = out.get('text', '')
     if t.startswith(('Which shop or category', '要通知哪家店')): return 'subask', None
     if t.startswith(('Which one failed', '是哪一個不能用')): return 'which', None

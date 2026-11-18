@@ -1,7 +1,7 @@
 """Quidpaw speaking first: alerts, reminders, report follow-ups and scheduled picks.
 
 Every message here is something a person opted into: a subscription (optionally with a minimum
-discount), a saved offer, a report they made, Monday picks, or sale and payday reminders. Limits: nothing between 21:00 and 09:00 UK time (it waits for
+discount), a saved offer, a report they made, daily or Monday picks, or sale and payday reminders. Limits: nothing between 21:00 and 09:00 UK time (it waits for
 the morning), at most two messages a day to one person (offers bundled into one).
 DMs only: Narra's agent policy (F23) does not allow an agent to post first in a group, and an
 agent cannot open a new DM, so a person must have talked to Quidpaw in a DM before.
@@ -28,7 +28,7 @@ SCHEMA = [
     'create table if not exists events (user text, key text, primary key (user, key))',
 ]
 SUB_COLUMNS = [('threshold', 'real'), ('fp', 'text')]
-SCHEDULE_HOUR = 10   # Monday picks, sale eves, payday and term start go out from 10:00 UK
+SCHEDULE_HOUR = 10   # Daily and Monday picks, sale eves, payday and term start go out from 10:00 UK
 
 
 def setup(db):
@@ -212,14 +212,16 @@ class Notifier:
         self.db.execute('insert into events values(?,?)', (uid, key))
         return True
 
-    def _picks(self, uid, live, since=None, n=3):
-        """Best offers for this person: their shops and categories first, then their group (student...), then everyone."""
+    def _picks(self, uid, live, since=None, n=3, fresh=None, skip=()):
+        """Best offers for this person: their shops and categories first, then their group (student...), then everyone.
+        fresh: offers first seen after this time go first. skip: offer ids not to pick."""
         u = self.user(uid) or {}
         subs = [dict(kind=k, value=v) for k, v in self.db.execute(
             "select kind, value from subs where user=? and kind in ('retailer','category','eligibility')", (uid,)).fetchall()]
-        pool = [v for v in live if since is None or (self.db.execute('select first_seen from seen where id=?', (v['id'],)).fetchone() or [0])[0] >= since]
+        seen = lambda v: (self.db.execute('select first_seen from seen where id=?', (v['id'],)).fetchone() or [0])[0]
+        pool = [v for v in live if v['id'] not in skip and (since is None or seen(v) >= since)]
         mine = lambda v: any(matches(s, v) for s in subs)
-        rank = lambda v: (not mine(v), v.get('eligibility') not in (u.get('identity'), 'everyone'), -strength(v))
+        rank = lambda v: (fresh is not None and seen(v) < fresh, not mine(v), v.get('eligibility') not in (u.get('identity'), 'everyone'), -strength(v))
         picked, per = [], {}
         for v in sorted(pool, key=rank):
             if per.get(v['retailer'], 0) < 1:   # one per shop
@@ -232,9 +234,18 @@ class Notifier:
         day = local.date()
         week = f'{day.isocalendar()[0]}-W{day.isocalendar()[1]}'
         what = occasion(day)
-        for uid, kind in self.db.execute("select user, kind from subs where kind in ('weekly','sales','eligibility')").fetchall():
+        for uid, kind in self.db.execute("select user, kind from subs where kind in ('daily','weekly','sales','eligibility')").fetchall():
             u = self.user(uid) or {}; zh = u.get('lang') != 'en'
-            if kind == 'weekly' and day.weekday() == 0 and self._once(uid, 'weekly-' + week):
+            if kind == 'daily' and self._once(uid, 'daily-' + day.isoformat()):
+                # New in the last day first, then the best of the rest; never an offer this person already got as a daily pick.
+                sent = {k[len('daily-offer-'):] for k, in self.db.execute("select key from events where user=? and key like 'daily-offer-%'", (uid,))}
+                picks = self._picks(uid, live, fresh=now - 86400, skip=sent)
+                for v in picks:
+                    self._once(uid, 'daily-offer-' + v['id'])
+                if picks:
+                    self._queue(uid, '☀️ 今日精選：' if zh else "☀️ Today's picks:", now, [localize(v, zh) for v in picks], zh,
+                                '說「關閉每日精選」就不再收到。' if zh else 'Say "daily picks off" to stop these.')
+            elif kind == 'weekly' and day.weekday() == 0 and self._once(uid, 'weekly-' + week):
                 picks = self._picks(uid, live, since=now - 7 * 86400)
                 if picks:  # nothing new this week: no message
                     self._queue(uid, '🐾 本週新上架精選：' if zh else '🐾 New this week:', now, [localize(v, zh) for v in picks], zh,
