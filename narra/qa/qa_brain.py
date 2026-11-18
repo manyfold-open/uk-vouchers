@@ -66,6 +66,8 @@ CASES = [
     ('開啟週報', [], dict(lang='zh', kind='text', must='每週一')),
     ('weekly digest on', [], dict(lang='en', kind='text', must='Monday')),
     ('關閉週報', [], dict(lang='zh', kind='text', must='已關閉')),
+    ('開啟每日精選', [], dict(lang='zh', kind='text', must='每天')),
+    ('daily picks on', [], dict(lang='en', kind='text', must='Every day')),
     ('大促提醒我', [], dict(lang='zh', kind='text', must='黑色星期五')),
     ('關閉大促提醒', [], dict(lang='zh', kind='text', must='已關閉')),
     ('我是學生', [], dict(lang='zh', kind='offers', must='通知你嗎')),
@@ -92,14 +94,14 @@ async def main():
         if out.startswith('!!'): problems.append('crashed')
         if exp.get('lang') == 'zh' and not CJK.search(out): problems.append('not Chinese')
         if exp.get('lang') == 'en' and len(CJK.findall(out)) > 8: problems.append('not English')
-        is_offers = bool(re.search(r'^1\. ', out, re.M))
+        is_offers = bool(re.search(r'^1️⃣ ', out, re.M))
         if exp.get('kind') == 'offers' and not is_offers: problems.append('no offers')
         if exp.get('kind') == 'text' and is_offers: problems.append('offers for chit-chat')
         if exp.get('must') and not re.search(exp['must'], out): problems.append('missing ' + exp['must'])
         if exp.get('mustnot') and re.search(exp['mustnot'], out): problems.append('has ' + exp['mustnot'])
-        for c in re.findall(r'(?:碼|[Cc]ode)[：:]?[ \t]*([A-Z0-9][A-Z0-9_-]{2,})', out):
+        for c in re.findall(r'(?:碼|[Cc]ode)[：:]?[ \t]*`?([A-Z0-9][A-Z0-9_-]{2,})', out):
             if c not in codes: problems.append('invented code ' + c)
-        for u in re.findall(r'https?://\S+', out):
+        for u in re.findall(r'https?://[^\s)]+', out):
             if u not in urls: problems.append('unknown link ' + u[:40])
         if re.search('請提供商店名稱|Which retailer', out) and exp.get('kind') == 'offers': problems.append('dead-end question')
         if dt > (15 if used else 3): problems.append(f'slow {dt:.1f}s')

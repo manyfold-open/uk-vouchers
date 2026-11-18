@@ -267,7 +267,7 @@ async def _reply(room,event,context,attachment=None):
         if result and result.get('card') and not voice:
             intro=('\n\n'+group_intro(zh)) if group and body.endswith(group_intro(zh)) else ''
             caption=sorry+result['card_text']+intro
-            image=await card_image(result['card'],caption if CAPTION else None)
+            image=await card_image(result['card'],sorry+result.get('card_caption',result['card_text'])+intro if CAPTION else None)
             if image and CAPTION:
                 payload=image  # one message: goes through the same authorized delivery as text
             elif image:
