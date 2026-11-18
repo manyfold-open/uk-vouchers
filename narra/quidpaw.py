@@ -184,6 +184,7 @@ class Brain:
             'question_waiting_for_yes_no': (ctx.get('pending') or {}).get('label'),
             'their_alerts': [s_['label'] for s_ in ctx.get('subs') or []],
             'their_identity': ctx.get('identity'),
+            'last_request': asked_of(ctx.get('last')) or None,
         }
         prompt = (
             'You are the planner for Quidpaw, a friendly UK discount-code assistant in a chat app. '
@@ -220,7 +221,10 @@ class Brain:
             'offers for the shop it shows. line: at most 12 words stating what follows ("Amazon codes:", 「美妝學生優惠：」), no "let me", '
             '"來看看", "hottest", no promise of codes; same language as the user (Chinese = Traditional Chinese); it must '
             'NEVER say that you did, saved, reported, subscribed or cancelled anything, because the program does that and says so itself; '
-            'no invented codes or offers.\n'
+            'no invented codes or offers. '
+            'For chat, line is the whole reply: a complete sentence, never ending with a colon or promising a list. '
+            'last_request is what they asked for last; when it found nothing, offers_on_screen are only close alternatives, '
+            'and a short follow-up ("what about student ones?") still means last_request\'s shop or category.\n'
             'Known shops: ' + ', '.join(watch) + '\n'
             'Allowed categories and eligibility: ' + json.dumps({k: [x['value'] for x in meta[k]] for k in ('categories', 'eligibility')}) + '\n'
             'State: ' + json.dumps(state, ensure_ascii=False) + '\n'
@@ -324,13 +328,16 @@ class Brain:
                     return await self._search(out, last['query'], lang, zh, group, ctx, page=last.get('page', 1) + 1)
                 return await self._search(out, {}, lang, zh, group, ctx)
         p = await self.rules(t)
-        prev = {k: v for k, v in (last.get('query') or {}).items() if not k.startswith('_')}
+        prev = asked_of(last)
+        carried = {}
         # "有冇學生嘅？" after a Trainline list means Trainline student offers: a short message that only names who
         # it is for keeps the shop and category of the list on screen.
         if prev and not p.get('retailer') and len(t) <= 40 and p.get('eligibility') and not p.get('category'):
             for k in ('retailer', 'category'):
                 if prev.get(k):
-                    p[k] = prev[k]
+                    p[k] = carried[k] = prev[k]
+            if carried.get('retailer'):  # its display name and category come with it ("ASOS", not "Asos")
+                p.update({k: v for k, v in (await self.rules(carried['retailer'])).items() if k.startswith('_')})
         found = any(k in p for k in ('retailer', 'category', 'eligibility'))
         follow = bool(FOLLOW_UP.search(t)) and bool(history)
         if not attachment and not follow and not p.get('_ambiguous') and not ACTION_HINT.search(t):
@@ -357,6 +364,8 @@ class Brain:
                 plan['retailer'] = named['retailer']
         if plan.get('retailer') and plan['retailer'] == p.get('retailer'):
             plan = {**{k: v for k, v in p.items() if k.startswith('_')}, **plan}
+        if carried and plan.get('intent') == 'search' and not any(plan.get(k) for k in ('retailer', 'category', 'q')):
+            plan.update({**{k: v for k, v in p.items() if k.startswith('_')}, **carried})  # "那學生的呢" keeps the shop it follows
         if plan.get('line') and (bool(CJK.search(plan['line'])) != zh):
             plan.pop('line')  # a lead-in in the other language (or mixed) reads as a glitch
         if plan.get('line'):
@@ -398,7 +407,8 @@ class Brain:
             if group:
                 shop = plan.get('_retailer_name') or (plan.get('retailer') or 'Boots').title()
                 out['text'] = say(f'通知是個人的，請私訊我說「{shop} 有新的通知我」🐾', f'Alerts are personal: DM me "notify me about {shop}" 🐾'); return out
-            sub = sub_from(filters, plan) or sub_from({k: v for k, v in (last.get('query') or {}).items() if not k.startswith('_')}, {})
+            asked = asked_of(last)
+            sub = sub_from(filters, plan) or sub_from(asked, await self.rules(asked['retailer']) if asked.get('retailer') else {})
             if sub and sub['kind'] == 'retailer' and (filters.get('eligibility') or filters.get('category') or filters.get('q')):
                 sub = {**sub, 'label': sub['label'] + say('（所有新優惠）', ' (any new offer)')}
             if not sub:
@@ -453,7 +463,12 @@ class Brain:
             if ctx.get('attachment') and not plan.get('line'):
                 out['text'] = say('我看不出這張圖是哪家店 🐾 可以直接打店名或貼商品連結嗎？', "I can't tell which shop that is 🐾 Could you type the shop name or paste the product link?")
                 return out
-            out['text'] = plan.get('line') or say('我是找英國折扣的小幫手，跟我說商店或類別就好，例如「美妝優惠」。',
+            line = plan.get('line')
+            if line and re.search(r'[:：]\s*$', line):
+                if any(filters.get(k) for k in ('retailer', 'category', 'eligibility', 'q')):
+                    return await self._search(out, filters, lang, zh, group, ctx, plan=plan, intro=line)  # the list it promised
+                line = re.sub(r'[\s:：]+$', '', line) + say('。跟我說商店或類別就好，例如「旅遊優惠」。', '. Tell me a shop or category, like "travel deals".')
+            out['text'] = line or say('我是找英國折扣的小幫手，跟我說商店或類別就好，例如「美妝優惠」。',
                                                   "I'm here for UK discounts. Tell me a shop or category, like \"beauty deals\".")
             return out
         if intent == 'browse':
@@ -618,7 +633,8 @@ class Brain:
                 ask = say(f'\n要我在{zw(sub["label"])}有優惠時通知你嗎？回「好」就行。', f'\nWant me to tell you when {sub["label"]} has one? Just say "yes".')
             lead = note + ask + (say('\n先看看相近的：', '\nMeanwhile, close ones:') if found else '')
             out['spoken_note'] = note
-            out.update(query={**near, '_near': True} if near else {}, total=len(found))
+            asked = {k: filters[k] for k in ('retailer', 'category', 'eligibility', 'q') if filters.get(k)}
+            out.update(query={**near, '_near': True, '_asked': asked} if near else {'_asked': asked}, total=len(found))
         if not found:
             out['text'] = (lead + '\n' if lead else '') + say('目前沒有已核對的優惠，晚點再問我看看。', 'No checked offers right now. Try me again later.')
             return out
@@ -719,6 +735,15 @@ ACTION_HINT = re.compile(r"notif|remind|alert|subscri|unsub|\bstop\b|cancel|turn
 # A line that claims something was done: only the handlers may say that.
 CLAIM = re.compile(r"\bdone\b|\b(alerts?|notifications?|reminders?) (is |are |has been |have been )?(set|on|off|deleted|removed|enabled|disabled)\b|i (have |'ve )?(flagged|set|deleted|enabled|turned)|say .yes|回「好」|已(幫|為)你|為你(開啟|設定|訂閱)|i.?ll (dm|flag|report|remind|notify|message|let you know|tell you)|no more messages|reported|unsubscribed|subscribed|turned (on|off)|saved|回報|已取消|已關閉|不再(發|通知|傳|打擾)|會(私訊|通知)你|幫你(回報|取消|設定|收藏)|已(設定|訂閱|收藏|記住)|記住了", re.I)
 NUMBERS = {'一': 1, '二': 2, '兩': 2, '三': 3, '四': 4, '五': 5}
+
+
+def asked_of(last):
+    """What the shopper last asked for. After a search that found nothing, the list on screen is only close alternatives,
+    so the query it ran is not what they asked; the asked filters are kept under _asked."""
+    q = (last or {}).get('query') or {}
+    if q.get('_asked') is not None:
+        return dict(q['_asked'])
+    return {k: v for k, v in q.items() if not k.startswith('_')}
 
 
 def pick(text, offers):
