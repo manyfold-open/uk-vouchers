@@ -255,7 +255,8 @@ class Brain:
     # ---- answering ----
 
     async def offers(self, lang, limit, diverse=False, page=1, **filters):
-        """(offers, total). diverse: at most 2 per shop, so a broad list is not one shop's page."""
+        """(offers, total). diverse: one per shop, so a broad list is not one shop's page
+        (a second from the same shop only when there are not enough shops to fill it)."""
         params = {'lang': lang, 'sort': filters.get('sort', 'best'), 'limit': min(limit * 4, 20) if diverse else limit, 'page': page}
         for key in ('retailer', 'category', 'eligibility', 'q'):
             if filters.get(key):
@@ -271,12 +272,16 @@ class Brain:
         if not diverse:
             return rows[:limit], total
         more = total > page * params['limit']  # another API page exists, so "more" has something to show
-        picked, per = [], {}
+        picked, shops = [], set()
         for v in rows:
-            if per.get(v['retailer'], 0) < 2:
-                picked.append(v); per[v['retailer']] = per.get(v['retailer'], 0) + 1
+            if v['retailer'] not in shops:
+                picked.append(v); shops.add(v['retailer'])
             if len(picked) == limit:
                 break
+        if len(picked) < limit:  # few shops: fill with their next best, still in ranking order
+            ids = {v['id'] for v in picked}
+            picked += [v for v in rows if v['id'] not in ids][:limit - len(picked)]
+            picked.sort(key=rows.index)
         return picked, (page - 1) * limit + len(picked) + (limit if more else 0)
 
     async def answer(self, text, history=None, attachment=None, group=False, lang=None):
