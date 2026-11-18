@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * node scout/scan.ts [--only boots,asos] [--part A|B] [--concurrency 8] [--pages 6]
+ * node scout/scan.ts [--only boots,asos] [--part A|B|C] [--concurrency 8] [--pages 6]
  *
  * Walks the watchlist: opens each retailer's home page, then up to --pages of its offers,
  * promotion-terms and delivery pages, and writes every candidate found to
@@ -31,9 +31,11 @@ const started = Date.now();
 type Retailer = { name: string; url: string; category: string };
 const { retailers } = JSON.parse(readFileSync(join(here, 'retailers.json'), 'utf8')) as { retailers: Retailer[] };
 let chosen = retailers;
-// Same split the scout prompt uses: part A is the first half of the watchlist, part B the rest.
-if (part === 'A') chosen = retailers.slice(0, Math.ceil(retailers.length / 2));
-if (part === 'B') chosen = retailers.slice(Math.ceil(retailers.length / 2));
+// Same split the scout prompt uses: the watchlist in three equal parts, A, B and C, in order.
+const third = Math.ceil(retailers.length / 3);
+if (part === 'A') chosen = retailers.slice(0, third);
+if (part === 'B') chosen = retailers.slice(third, 2 * third);
+if (part === 'C') chosen = retailers.slice(2 * third);
 if (only) chosen = chosen.filter((r) => only.some((o: string) => r.name.toLowerCase().includes(o) || r.url.includes(o)));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

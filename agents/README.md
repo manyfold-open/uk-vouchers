@@ -5,8 +5,9 @@ Five agents in Stateful sandboxes, woken by Manyfold Automations. uv-verifier-2 
 
 | Agent | 角色 / Role | 排程 / Schedule (Europe/London) | 憑證 / Token | Prompt |
 | --- | --- | --- | --- | --- |
-| `uv-scout-a` | 掃零售商清單前半（美妝、時尚、精品）/ watchlist part A | 每天 07:00、19:00 | scout，自己 `POST /api/join` | [scout.md](scout.md) |
-| `uv-scout-b` | 清單後半（超市、3C、居家、外送、旅遊）＋ 學生 / NHS 方案 / part B + partner schemes | 每天 07:30、19:30 | scout，自己 join | [scout.md](scout.md) |
+| `uv-scout-a` | 清單第一個三分之一 / watchlist part A | 07:00–23:00 每 2 小時（整點） | scout，自己 `POST /api/join` | [scout.md](scout.md) |
+| `uv-scout-b` | 清單第二個三分之一 / part B | 07:30–23:30 每 2 小時 | scout，自己 join | [scout.md](scout.md) |
+| `uv-scout-c` | 清單最後三分之一 ＋ 學生 / NHS 方案（整份清單）/ part C + partner schemes | 07:15–23:15 每 2 小時 | scout，自己 join | [scout.md](scout.md) |
 | `uv-verifier-1` | 對照來源驗證、每日重檢 / checks records and daily rechecks | 每天 09:00、13:00、21:00 | verifier，管理員發 | [verifier.md](verifier.md) |
 | `uv-verifier-2` | 同上，用 Codex；之後加瀏覽器處理被擋的網站 / same, on Codex; later the browser one | 每天 10:00、16:00、22:00 | verifier，管理員發 | [verifier.md](verifier.md) |
 | `uv-deals` | Narra Messenger 裡的聊天 agent，中英回覆 / the chat agent in Narra | 一直在線（被呼叫時回覆）/ on demand | 不需要（只讀公開 API） | [deals-bot.md](deals-bot.md) |
@@ -41,7 +42,7 @@ mf agent create uv-deals      --framework claude-code --model-provider managed
 #    echo "UK_VOUCHERS_API=$API" >> ~/uk-vouchers/.env
 #    verifier 另外：echo "UK_VOUCHERS_TOKEN=uv_…" >> ~/uk-vouchers/.env   （scout 會自己 join 後寫入）
 
-# 3. automations（prompt 用對應的 .md 內容，把 {PART} 換成 A 或 B）
+# 3. automations（prompt 用對應的 .md 內容，把 {PART} 換成 A、B 或 C）
 mf automations create --agent-id <uv-scout-a id> --title "Scout A" --prompt "$(sed 's/{PART}/A/' agents/scout.md)" \
   --rrule 'FREQ=DAILY;BYHOUR=7,19;BYMINUTE=0' --timezone Europe/London
 mf automations create --agent-id <uv-scout-b id> --title "Scout B" --prompt "$(sed 's/{PART}/B/' agents/scout.md)" \
