@@ -270,13 +270,14 @@ class Brain:
         rows, total = doc.get('vouchers', []), doc.get('total', 0)
         if not diverse:
             return rows[:limit], total
+        more = total > page * params['limit']  # another API page exists, so "more" has something to show
         picked, per = [], {}
         for v in rows:
             if per.get(v['retailer'], 0) < 2:
                 picked.append(v); per[v['retailer']] = per.get(v['retailer'], 0) + 1
             if len(picked) == limit:
                 break
-        return picked, len(picked)
+        return picked, (page - 1) * limit + len(picked) + (limit if more else 0)
 
     async def answer(self, text, history=None, attachment=None, group=False, lang=None):
         """Text only (tests and simple callers); the runtime uses respond()."""
@@ -298,7 +299,11 @@ class Brain:
         last = ctx.get('last') or {}
         if not attachment:
             if GREETING.match(t):
-                out['text'] = greeting(zh, group); return out
+                try:
+                    return await self._search(out, {}, lang, zh, group, ctx, lead=say('今天最划算的幾個：', 'Best ones today:'),
+                                              limit=3, intro=greeting_short(zh, group))
+                except Exception:  # the API being down must not stop a hello
+                    out.update(text=greeting(zh, group), offers=[], query=None); out.pop('card', None); return out
             if HELP.match(t):
                 out['text'] = help_text(zh, group); return out
             if THANKS.match(t):
@@ -574,10 +579,10 @@ class Brain:
             return self._subscribe(out, sub, zh, group)
         return None
 
-    async def _search(self, out, filters, lang, zh, group, ctx, page=1, lead=None, plan=None):
+    async def _search(self, out, filters, lang, zh, group, ctx, page=1, lead=None, plan=None, limit=None, intro=None):
         say = lambda a, b: a if zh else b
         plan = plan or {}
-        limit = 3 if group else 5
+        limit = limit or (3 if group else 5)
         identity = None if group else ctx.get('identity')
         browse = not any(filters.get(k) for k in ('retailer', 'category', 'eligibility', 'q'))
         if browse:
@@ -633,6 +638,9 @@ class Brain:
         # The runtime sends a picture card plus this short text (codes and links to copy); out['text'] is the fallback.
         out['card'] = {'zh': zh, 'lead': lead or '', 'offers': found}
         out['card_text'] = render_compact(found, zh, lead, tips)
+        if intro:  # a hello: who I am above the list, kept out of the card's two-line lead
+            out['text'] = intro + '\n\n' + out['text']
+            out['card_text'] = intro + '\n\n' + out['card_text']
         return out
 
     def _subscribe(self, out, sub, zh, group):
@@ -648,7 +656,7 @@ class Brain:
             out['text'] = '是哪一個不能用？回「第 2 個不能用」這樣就好。' if zh else 'Which one failed? Say "number 2 didn\'t work".'
             return out
         out['actions'].append({'report': [v['id'] for v in picked], 'reason': t[:200]})
-        names = '、'.join(v['retailer'] for v in picked)
+        names = ('、' if zh else ', ').join(dict.fromkeys(v['retailer'] for v in picked))
         out['text'] = (f'謝謝回報！我請人馬上重新確認 {names} 這個優惠，確認後跟你說結果 🐾' if zh else
                        f"Thanks for telling me! I've asked for {names} to be rechecked now and will let you know 🐾")
         return out
@@ -811,8 +819,8 @@ def suggestions(out, filters, zh, group, identity, limit, page):
 
 def group_intro(zh):
     """Added once to Quidpaw's first reply in a group (Narra's policy: agents never post on join)."""
-    return ('（我是 Quidpaw 🐾 在群組裡 @我 或回覆我的訊息就能問優惠；通知和個人設定請私訊我。）' if zh else
-            '(I\'m Quidpaw 🐾 In groups, @mention me or reply to my message to ask for deals; alerts and settings are in DMs.)')
+    return ('（我是 Quidpaw 🐾 在群組裡 @我 或回覆我的訊息就能問優惠；碼不能用就回覆那則說「第 2 個不能用」，在群組按 👎 我收不到。通知和個人設定請私訊我。）' if zh else
+            '(I\'m Quidpaw 🐾 In groups, @mention me or reply to my message to ask for deals. If a code fails, reply "number 2 didn\'t work": I can\'t see 👎 in groups. Alerts and settings are in DMs.)')
 
 
 def greeting(zh, group=False):
@@ -823,31 +831,30 @@ def greeting(zh, group=False):
     return s + ('\nIn groups, @mention me or reply to my message.' if group else '\nSay "notify me about Boots" and I\'ll DM you when something new shows up.')
 
 
+def greeting_short(zh, group=False):
+    """A hello: who I am in one line, then the list itself shows what I do."""
+    if zh:
+        return '嗨！我是 Quidpaw 英國省錢小幫手 🐾 跟我說店名或類別，例如「Boots」「美妝」「學生折扣」' + ('（群組裡記得 @我）。' if group else '。說「怎麼用」看全部功能。')
+    return "Hi! I'm Quidpaw 🐾 Tell me a shop or a category, like \"Boots\", \"beauty\" or \"student discounts\"" + (' (in groups, @mention me).' if group else '. Say "help" for everything I can do.')
+
+
 def help_text(zh, group=False):
     if zh:
         lines = ['🐾 Quidpaw 可以幫你：',
-                 '• 找某家店的碼：「Boots 有什麼碼？」，也可以直接貼商品連結或購物車截圖',
-                 '• 找某類優惠：「美妝優惠」「外送折扣」；看下一頁說「更多」',
-                 '• 找身分優惠：「學生折扣」；說「我是學生」之後學生優惠都排前面',
-                 '• 新優惠通知：「Boots 有新的通知我」「Boots 7 折以下才通知我」；收藏到期提醒：「收藏第 2 個」',
-                 '• 每週一精選：「開啟週報」；大促與發薪日提醒：「大促提醒我」',
-                 '• 碼不能用：回覆那則訊息說「第 2 個不能用」，我請人重新確認',
-                 '所有優惠都對照過商店官網，但沒有實際結帳測試。']
+                 '• 找碼：「Boots 有什麼碼？」「美妝優惠」「學生折扣」，或貼商品連結、截圖；下一頁說「更多」',
+                 '• 通知：「Boots 有新的通知我」「收藏第 2 個」（到期前提醒）「開啟週報」「大促提醒我」',
+                 '• 碼不能用：回覆那則說「第 2 個不能用」',
+                 '優惠都對照過官網，但沒有實際結帳測試。']
         if group:
-            lines.insert(1, '在群組裡請 @Quidpaw 或回覆我的訊息，我才會回答。通知和身分設定請私訊我。')
-            lines.append('群組設定：「@Quidpaw 說英文 / 說中文」。')
+            lines.insert(1, '群組裡請 @Quidpaw 或回覆我；通知和個人設定請私訊。「@Quidpaw 說英文 / 說中文」換語言。')
         return '\n'.join(lines)
     lines = ["🐾 Here's what I can do:",
-             '• A shop\'s codes: "Boots codes", or paste a product link or a basket screenshot',
-             '• A category: "beauty deals"; say "more" for the next page',
-             '• For a group of people: "student discounts"; say "I\'m a student" to see those first',
-             '• Alerts: "notify me about Boots", "Boots 30% off or more"; end reminders: "save number 2"',
-             '• Monday picks: "weekly digest on"; sale and payday reminders: "sale alerts"',
-             '• A code failed: reply "number 2 didn\'t work" and I\'ll get it rechecked',
-             "Every offer is checked against the shop's own site, not tested at checkout."]
+             '• Find codes: "Boots codes", "beauty deals", "student discounts", or paste a link or screenshot; "more" for the next page',
+             '• Alerts: "notify me about Boots", "save number 2" (end reminder), "weekly digest on", "sale alerts"',
+             '• A code failed: reply "number 2 didn\'t work"',
+             "Offers are checked on each shop's own site, not tested at checkout."]
     if group:
-        lines.insert(1, "In groups, @mention me or reply to my message. Alerts and personal settings are DM only.")
-        lines.append('Group setting: "@Quidpaw speak Chinese / English".')
+        lines.insert(1, 'In groups, @mention me or reply to me; alerts and settings are DM only. "@Quidpaw speak Chinese / English" switches language.')
     return '\n'.join(lines)
 
 
@@ -861,6 +868,17 @@ def _when(iso, zh):
     if days < 2:
         return '昨天核對' if zh else 'checked yesterday'
     return f'{int(days)} 天前核對' if zh else f'checked {int(days)} days ago'
+
+
+MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split()
+
+
+def en_date(iso):
+    """2026-11-30 → 30 Nov (the card says the same)."""
+    try:
+        return f'{int(iso[8:10])} {MONTHS[int(iso[5:7]) - 1]}'
+    except (ValueError, IndexError):
+        return iso
 
 
 def offer_lines(i, v, zh, group=False):
@@ -878,7 +896,7 @@ def offer_lines(i, v, zh, group=False):
     if v.get('min_spend_gbp'):
         bits.append(f"滿 £{v['min_spend_gbp']:g}" if zh else f"min £{v['min_spend_gbp']:g}")
     if v.get('expires_on'):
-        bits.append(f"到 {v['expires_on'][5:].replace('-', '/')}" if zh else f"ends {v['expires_on']}")
+        bits.append(f"到 {v['expires_on'][5:].replace('-', '/')}" if zh else f"ends {en_date(v['expires_on'])}")
     checked = _when(v.get('last_checked_at', ''), zh)
     if checked and not group:
         bits.append(checked)
@@ -906,7 +924,9 @@ def render_compact(offers, zh, lead=None, tips=None):
     lines = [lead] if lead else []
     for i, v in enumerate(offers, 1):
         code = v.get('code')
-        lines.append(f"{i}. {v['retailer']}　" + ((f'碼：{code}' if zh else f'Code: {code}') if code else ('結帳自動折' if zh else 'no code')))
+        lines.append(f"{i}. {v['retailer']}" + ('' if code else ('｜結帳自動折，不用碼' if zh else ' · no code needed')))
+        if code:
+            lines.append(('   碼：' if zh else '   Code: ') + code)  # the code on its own line, easy to select
         lines.append('   ' + (v.get('offer_url') or v.get('retailer_url', '')))
     if tips:
         lines.append(('接著可以說：' + '｜'.join(f'「{t}」' for t in tips)) if zh else ('Next: ' + ' · '.join(f'"{t}"' for t in tips)))
@@ -926,3 +946,22 @@ def render_voice(offers, zh, total, note=None):
     more = len(offers) > 2
     tail = ('連結' + ('和其他優惠' if more else '') + '我傳到聊天室了。') if zh else ("I've put the links" + (' and the rest' if more else '') + ' in the chat.')
     return head + ('；' if zh else '; ').join(bits) + ('。' if zh else '. ') + tail
+
+URL = re.compile(r'https?://[^\s<>"]+')
+CODE_LINE = re.compile(r'((?:碼：|Code: ))([A-Z0-9][A-Z0-9_-]{2,31})')
+
+
+def to_html(body):
+    """formatted_body for Matrix clients that show HTML: links as a short tappable name, codes in monospace.
+    None when there is nothing to format (the plain body is then enough)."""
+    if not body or not (URL.search(body) or CODE_LINE.search(body)):
+        return None
+    import html
+    out = []
+    for part in re.split(r'(https?://[^\s<>"]+)', body):
+        if URL.fullmatch(part):
+            host = re.sub(r'^https?://(www\.)?', '', part).split('/')[0]
+            out.append(f'<a href="{html.escape(part, quote=True)}">🔗 {html.escape(host)}</a>')
+        else:
+            out.append(CODE_LINE.sub(lambda m: m.group(1) + '<code>' + m.group(2) + '</code>', html.escape(part, quote=False)))
+    return ''.join(out).replace('\n', '<br>')

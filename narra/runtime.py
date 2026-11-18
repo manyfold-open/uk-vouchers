@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 
 ROOT=Path(__file__).resolve().parent
 import sys; sys.path.insert(0,str(ROOT))
-from quidpaw import Brain, group_intro
+from quidpaw import Brain, group_intro, render_compact, to_html
 from notify import Notifier
 WORK=ROOT.parent
 PRIVATE=WORK/'.narra/agent-b4b94dd2'
@@ -35,7 +35,10 @@ if not DB.execute("select 1 from kv where key='room_lang_v2'").fetchone():
     DB.execute('update rooms set lang=null'); DB.execute("insert into kv values('room_lang_v2','1')")
 DB.commit()
 TASKS={}; VOICE={}; CANCELLED=set(); TURNS=set(); LOCKS={}
-STALE_MS=30*60*1000      # older questions would only confuse the room
+STALE_MS=30*60*1000      # older group questions would only confuse the room
+LATE_MS=12*60*60*1000    # a DM this old (the sandbox slept) still gets an answer, with an apology
+CAPTION=os.getenv('QUIDPAW_CARD_CAPTION')=='1'  # card + codes in one m.image with a caption, if Narra shows captions
+BEST={}                  # lang -> (ts, offers): the last good "best right now" list, for when the API is down
 NAME=re.compile(r'@?quidpaw(?![\w])',re.I)  # stripped from the text; a mention itself must be m.mentions or a reply (Narra's rule)
 NOTIFY_EVERY=10*60
 
@@ -56,6 +59,23 @@ async def send(room,typ,content,txn):
         DB.execute('insert or ignore into own values(?,?,?)',(r['event_id'],room,time.time()))
         DB.execute('delete from own where room=? and id not in (select id from own where room=? order by ts desc limit 30)',(room,room));DB.commit()
     return r
+def text_content(body,msgtype='m.text'):
+    # Plain body for every client; formatted_body (tappable short links, codes in monospace) where HTML is shown.
+    c={'msgtype':msgtype,'body':body}
+    html=to_html(body)
+    if html: c.update(format='org.matrix.custom.html',formatted_body=html)
+    return c
+async def typing(room,on):
+    try: await matrix('/rooms/'+esc(room)+'/typing/'+esc(USER),{'typing':True,'timeout':30000} if on else {'typing':False},'PUT')
+    except Exception: pass  # cosmetic only
+async def keep_typing(room):
+    # "Quidpaw is typing…" while the planner and the card run (they can take several seconds).
+    while True:
+        await typing(room,True); await asyncio.sleep(20)
+def user_zh(user,fallback_text=''):
+    u=NOTIFIER.user(user) or {}
+    if u.get('lang') in ('zh','en'): return u['lang']=='zh'
+    return bool(re.search('[㐀-鿿]',fallback_text or '')) or not fallback_text
 def room_state(room):
     row=DB.execute('select lang,welcomed from rooms where room=?',(room,)).fetchone()
     if not row: DB.execute('insert or ignore into rooms(room) values(?)',(room,));DB.commit();row=(None,0)
@@ -106,22 +126,25 @@ def upload_request(data,filename):
     r=Request(HS+'/_matrix/media/v3/upload?'+urlencode({'filename':filename}),data=data,method='POST',
               headers={'User-Agent':'curl/8.0','Content-Type':'image/png','Authorization':'Bearer '+C['access_token']})
     with urlopen(r,timeout=45) as f: return json.loads(f.read())
-async def card_image(card):
+async def card_image(card,caption=None):
     # Offer card PNG by cards/card.mjs (resvg + Noto Sans TC); None when anything goes wrong, so text still goes out.
+    # caption: the codes and links as the image's caption (MSC2530: body != filename), so the answer is one message.
     fd,path=tempfile.mkstemp(suffix='.png',dir=ROOT/'media');os.close(fd)
     try:
         p=await asyncio.create_subprocess_exec('node',str(ROOT/'cards'/'card.mjs'),path,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
-        out,err=await asyncio.wait_for(p.communicate(json.dumps(card,ensure_ascii=False).encode()),25)
+        out,err=await asyncio.wait_for(p.communicate(json.dumps({**card,'caption':bool(caption)},ensure_ascii=False).encode()),25)
         if p.returncode: logging.warning('Card failed: %s',err.decode(errors='replace')[-200:]); return None
         info=json.loads(out); data=Path(path).read_bytes()
         mxc=(await asyncio.to_thread(upload_request,data,'quidpaw-offers.png')).get('content_uri')
         if not mxc: return None
-        return {'msgtype':'m.image','body':'quidpaw-offers.png','url':mxc,'info':{'mimetype':'image/png','w':info['width'],'h':info['height'],'size':len(data)}}
+        image={'msgtype':'m.image','body':'quidpaw-offers.png','url':mxc,'info':{'mimetype':'image/png','w':info['width'],'h':info['height'],'size':len(data)}}
+        if caption: image.update({k:v for k,v in text_content(caption).items() if k!='msgtype'},filename='quidpaw-offers.png')
+        return image
     except Exception as e:
         logging.warning('Card skipped: %s',type(e).__name__); return None
     finally: Path(path).unlink(missing_ok=True)
 async def send_text(room,body,user=None,offers=None):
-    r=await send(room,'m.room.message',{'msgtype':'m.text','body':body},'push-'+hashlib.sha256((room+body+str(time.time())).encode()).hexdigest())
+    r=await send(room,'m.room.message',text_content(body),'push-'+hashlib.sha256((room+body+str(time.time())).encode()).hexdigest())
     if offers:  # so 「收藏第 1 個」 or 「第 2 個不能用」 after a push points at the pushed offers
         DB.execute('insert or replace into shown values(?,?,?,?,?,?,?,?,?)',('push-'+(r.get('event_id') or str(time.time())),r.get('event_id'),room,user,json.dumps(offers),None,1,len(offers),time.time()));DB.commit()
 NOTIFIER=Notifier(DB,http,VOUCHERS,send_text,logging)
@@ -210,6 +233,7 @@ async def reply(room,event,context,attachment=None):
 async def _reply(room,event,context,attachment=None):
     content=event['content']; eid=event['event_id']; voice=content.get('ai.netmind.rtc.agent.turn.started.v2')
     group=bool(context and context.get('group')); user=event.get('sender','')
+    typer=None if voice else asyncio.create_task(keep_typing(room))
     try:
         text=clean(voice.get('transcript',content.get('body','')) if voice else content.get('body',''))
         # A group's language is only fixed by 「@Quidpaw 說英文 / 說中文」; otherwise each message is answered in its own language.
@@ -228,6 +252,8 @@ async def _reply(room,event,context,attachment=None):
             if not group: NOTIFIER.remember_user(user,room,'zh' if re.search('[\u3400-\u9fff]',result['text']) else 'en')
             await apply(result['actions'],room,user,result)
             body=result['text']
+            if result.get('card') and result.get('query')=={} and result.get('page',1)==1:
+                BEST['zh' if result['card']['zh'] else 'en']=(time.time(),result['card']['offers'])
             if result.get('offers') or result.get('query') is not None:
                 DB.execute('insert or replace into shown values(?,?,?,?,?,?,?,?,?)',(eid,None,room,user,json.dumps(result.get('offers') or []),
                            json.dumps(result.get('query')) if result.get('query') is not None else None,result.get('page',1),result.get('total',0),time.time()))
@@ -236,15 +262,23 @@ async def _reply(room,event,context,attachment=None):
         if group and not st['welcomed'] and not voice:
             set_room(room,welcomed=1); body=body+'\n\n'+group_intro(zh)
         if voice and ((voice['rtc_session_id'],voice['turn_id']) in CANCELLED or VOICE.get(room,{}).get('turn')!=voice['turn_id']):return
+        sorry=('抱歉晚回了 🐾\n' if zh else 'Sorry for the slow reply 🐾\n') if context and context.get('late') else ''
+        payload=None
         if result and result.get('card') and not voice:
-            image=await card_image(result['card'])
-            if image:
+            intro=('\n\n'+group_intro(zh)) if group and body.endswith(group_intro(zh)) else ''
+            caption=sorry+result['card_text']+intro
+            image=await card_image(result['card'],caption if CAPTION else None)
+            if image and CAPTION:
+                payload=image  # one message: goes through the same authorized delivery as text
+            elif image:
                 if group: image['m.relates_to']={'m.in_reply_to':{'event_id':eid}}
                 r=await send(room,'m.room.message',image,'card-'+hashlib.sha256(eid.encode()).hexdigest())
-                body=result['card_text']+(('\n\n'+group_intro(zh)) if group and body.endswith(group_intro(zh)) else '')
+                body=caption
                 if r.get('event_id'):  # a reply or 👎 on the picture means its offers too
                     DB.execute('insert or replace into shown values(?,?,?,?,?,?,?,?,?)',('card-'+eid,r['event_id'],room,user,json.dumps(result.get('offers') or []),None,1,len(result.get('offers') or []),time.time()-1));DB.commit()
-        payload={'msgtype':'m.text','body':body}
+            else: body=sorry+body
+        else: body=sorry+body
+        payload=payload or text_content(body)
         if group and not voice:payload['m.relates_to']={'m.in_reply_to':{'event_id':eid}}  # thread under the asker in busy groups
         if voice:payload['ai.netmind.rtc.voice_reply']={k:voice[k] for k in ('rtc_session_id','turn_id')}
         DB.execute('insert or ignore into replies(id,room,payload) values(?,?,?)',(eid,room,json.dumps(payload)));DB.commit()
@@ -255,15 +289,28 @@ async def _reply(room,event,context,attachment=None):
     except asyncio.CancelledError: raise
     except Exception as e:
         logging.error('Reply failed: %s',type(e).__name__)
-        body='暫時無法查詢優惠，請稍後再試。' if re.search('[\u3400-\u9fff]',content.get('body','')) else 'I cannot check offers right now. Please try again shortly.'
-        payload={'msgtype':'m.text','body':body}
+        payload=text_content(error_text(room,user,group,content.get('body',''),voice))
+        if group and not voice:payload['m.relates_to']={'m.in_reply_to':{'event_id':eid}}
         if voice:payload['ai.netmind.rtc.voice_reply']={k:voice[k] for k in ('rtc_session_id','turn_id')}
         await send(room,'m.room.message',payload,'error-'+hashlib.sha256(eid.encode()).hexdigest())
     finally:
+        if typer:
+            typer.cancel(); await typing(room,False)
         if attachment: Path(attachment).unlink(missing_ok=True)
         TASKS.pop(eid,None)
         if voice:TASKS.pop((voice['rtc_session_id'],voice['turn_id']),None)
 
+def error_text(room,user,group,text,voice=None):
+    # Not a dead end: say what to do, and show the last checked best list if there is a recent one.
+    lang=(room_state(room)['lang'] if group else None) or ('zh' if re.search('[㐀-鿿]',text or '') else None)
+    zh=lang=='zh' if lang else user_zh(user,text)
+    body=('我這邊暫時查不到即時優惠（連線出了點問題）。過一兩分鐘再傳一次同樣的問題就好 🐾' if zh else
+          "I can't reach the live offers right now. Send the same question again in a minute or two 🐾")
+    ts,offers=BEST.get('zh' if zh else 'en',(0,None))
+    if offers and not voice and time.time()-ts<6*3600:
+        hours=max(1,round((time.time()-ts)/3600))
+        body+=(f'\n\n先給你 {hours} 小時內核對過的幾個：\n' if zh else f'\n\nMeanwhile, the best ones as of {hours}h ago:\n')+render_compact(offers[:3],zh)
+    return body
 async def reaction(room,event,members):
     # A 👎 on one of Quidpaw's offer messages = "this didn't work". DMs only (in groups it would need a mention).
     rel=event.get('content',{}).get('m.relates_to',{})
@@ -307,11 +354,14 @@ async def handle(room,event,members):
     if typ=='m.reaction':return await reaction(room,event,members)
     image=typ=='m.room.message' and c.get('msgtype')=='m.image'
     if not rtc and not image and (typ!='m.room.message' or c.get('msgtype')!='m.text'):return
-    if not rtc and time.time()*1000-event.get('origin_server_ts',time.time()*1000)>STALE_MS:return
+    age=time.time()*1000-event.get('origin_server_ts',time.time()*1000)
+    if not rtc and age>LATE_MS:return
     mention=called(room,c)
     auth=await authorize(room,event,members,mention)
     group=auth.get('roomKind')!='dm' if auth.get('roomKind') else len(members)!=2
     if group and not rtc and aimed_elsewhere(c):return
+    late=not rtc and age>STALE_MS
+    if late and group:return  # an old group question would only confuse the room; a DM still gets its answer
     if auth.get('allow') is not True:
         notice=auth.get('notice',{})
         if notice.get('send') is True and notice.get('text'):
@@ -336,9 +386,16 @@ async def handle(room,event,members):
     attachment=None
     hint=c.get('ai.netmind.hint')
     if image:
-        if group or c.get('file'):return  # groups: an image cannot carry a mention; encrypted: unreadable
-        attachment=await image_attachment(room,c)
-        if not attachment:return
+        if group:return  # groups: an image cannot carry a mention
+        try: attachment=None if c.get('file') else await image_attachment(room,c)  # encrypted: unreadable without Matrix crypto
+        except Exception: attachment=None
+        if not attachment:
+            if DB.execute('select 1 from replies where id=?',(eid,)).fetchone():return
+            DB.execute('insert or ignore into replies(id,room,payload,sent) values(?,?,?,1)',(eid,room,'{}'));DB.commit()
+            zh=user_zh(sender)
+            await send(room,'m.room.message',text_content('這張圖我打不開 🐾 可以直接打店名，或貼商品連結給我嗎？' if zh else
+                       "I couldn't open that picture 🐾 Could you type the shop name or paste the product link?"),'img-'+hashlib.sha256(eid.encode()).hexdigest())
+            return
         event=dict(event); c=dict(c); c['body']=''; event['content']=c
     elif hint:
         if hint.get('kind')!='compound_trigger' or hint.get('version')!=1 or hint.get('target_msgtype')!='ai.netmind.compound':return
@@ -361,7 +418,7 @@ async def handle(room,event,members):
     if DB.execute('select 1 from replies where id=?',(eid,)).fetchone() or eid in TASKS:
         if attachment:Path(attachment).unlink(missing_ok=True)
         return
-    context={'group':group}
+    context={'group':group,'late':late}
     if re.search(r'https://[^\s]+/update-guide\.md',c.get('body','')):
         # Future code-changing updates require operator verification; never auto-ACK an unloaded version.
         await send(room,'m.room.message',{'msgtype':'m.text','body':'Runtime updates require maintenance in the Manyfold workspace. Please ask the owner to apply the Narra Runtime Update skill there; no update has been acknowledged.'},'update-'+hashlib.sha256(eid.encode()).hexdigest());return

@@ -76,7 +76,10 @@ function badge(v, zh) {
   return zh ? ['優惠', ''] : ['DEAL', ''];
 }
 
-export function cardSvg({ zh = true, lead = '', offers = [] }) {
+const MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+const enDate = (iso) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`;
+
+export function cardSvg({ zh = true, lead = '', offers = [], caption = false }) {
   const logo = 'data:image/png;base64,' + readFileSync(join(HERE, 'quidpaw-64.png')).toString('base64');
   const leadLines = lead ? wrap(lead.replace(/\s+/g, ' '), 13, W - PAD * 2 - 44, 2) : [];
   let y = PAD;
@@ -94,7 +97,7 @@ export function cardSvg({ zh = true, lead = '', offers = [] }) {
     if (v.eligibility && v.eligibility !== 'everyone' && who) meta.push(who);
     if (v.via) meta.push(`via ${v.via}`);
     if (v.min_spend_gbp) meta.push(zh ? `滿 £${v.min_spend_gbp}` : `min £${v.min_spend_gbp}`);
-    if (v.expires_on) meta.push(zh ? `到 ${v.expires_on.slice(5).replace('-', '/')}` : `ends ${v.expires_on.slice(5).replace('-', '/')}`);
+    if (v.expires_on) meta.push(zh ? `到 ${v.expires_on.slice(5).replace('-', '/')}` : `ends ${enDate(v.expires_on)}`);
     const warn = (v.reports_7d || 0) >= 3;
     const h = 12 + 18 + title.length * 17 + 30 + (meta.length ? 16 : 0) + (warn ? 16 : 0) + 8;
     parts.push(`<rect x="${PAD}" y="${y}" width="${W - PAD * 2}" height="${h}" rx="12" fill="${C.card}" stroke="${C.line}"/>`);
@@ -120,7 +123,8 @@ export function cardSvg({ zh = true, lead = '', offers = [] }) {
     if (warn) { ty += 16; parts.push(`<text x="${textX}" y="${ty}" font-size="12" fill="${C.warn}">${esc(zh ? '最近有人回報可能失效，重新確認中' : 'Reported not working; being rechecked')}</text>`); }
     y += h + 10;
   });
-  const foot = zh ? '已對照商店官網，結帳時可能仍有限制。碼和連結在下方文字。' : "Checked on each shop's own site; checkout may still have limits. Codes and links are in the text below.";
+  const where = caption ? (zh ? '碼和連結在圖片說明。' : ' Codes and links are in the caption.') : (zh ? '碼和連結在下方文字。' : ' Codes and links are in the text below.');
+  const foot = (zh ? '已對照商店官網，結帳時可能仍有限制。' : "Checked on each shop's own site; checkout may still have limits.") + where;
   const footLines = wrap(foot, 11, W - PAD * 2, 2);
   footLines.forEach((l, i) => parts.push(`<text x="${PAD}" y="${y + 6 + i * 14}" font-size="11" fill="${C.grey}">${esc(l)}</text>`));
   y += 6 + footLines.length * 14 + PAD;
