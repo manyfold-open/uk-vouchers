@@ -927,7 +927,7 @@ def offer_lines(i, v, zh, group=False):
     lines = [f"{num(i)} {v['retailer']}｜{title}"]
     code = v.get('code')
     # The code alone on its line, in code style.
-    lines.append(f'碼：`{code}`' if zh and code else f'Code: `{code}`' if code else ('結帳自動折扣，不用輸入碼' if zh else 'Applied at checkout, no code needed'))
+    lines.append(f'碼：{code}' if zh and code else f'Code: {code}' if code else ('結帳自動折扣，不用輸入碼' if zh else 'Applied at checkout, no code needed'))
     bits = []
     who = v.get('eligibility_zh') if zh else (v.get('eligibility') or '').replace('-', ' ')
     if v.get('eligibility') != 'everyone' and who:
@@ -961,15 +961,16 @@ def render(offers, zh, lead=None, group=False, tips=None, page=1):
 
 
 def render_compact(offers, zh, lead=None, tips=None):
-    """Goes with the picture card: what the card cannot do (copy a code, tap a link), one line per offer."""
-    lines = [lead] if lead else []
+    """Goes with the picture card, which already shows the details: per offer the shop (and its code, the one
+    thing to copy) and the link (a bare URL, which Narra makes tappable), with a blank line between offers."""
+    blocks = [lead] if lead else []
     for i, v in enumerate(offers, 1):
         code = v.get('code')
-        what = (f'碼 `{code}`' if zh else f'code `{code}`') if code else ('免碼' if zh else 'no code')
-        lines.append(f"{num(i)} {v['retailer']} · {what} · {link(v.get('offer_url') or v.get('retailer_url', ''))}")
+        head = f"{num(i)} {v['retailer']}" + ((f'｜碼 {code}' if zh else f' · code {code}') if code else '')
+        blocks.append(head + '\n' + link(v.get('offer_url') or v.get('retailer_url', '')))
     if tips:
-        lines.append(('接著可以說：' + '｜'.join(f'「{t}」' for t in tips)) if zh else ('Next: ' + ' · '.join(f'"{t}"' for t in tips)))
-    return '\n'.join(lines)
+        blocks.append(('接著可以說：' + '｜'.join(f'「{t}」' for t in tips)) if zh else ('Next: ' + ' · '.join(f'"{t}"' for t in tips)))
+    return '\n\n'.join(blocks)
 
 
 def render_voice(offers, zh, total, note=None):
@@ -995,11 +996,8 @@ def num(i):
 
 
 def link(url):
-    """A Markdown link with the site's name as its text (Narra shows Markdown): 🔗 boots.com."""
-    if not url:
-        return ''
-    host = re.sub(r'^https?://(www\.)?', '', url).split('/')[0]
-    return f"🔗 [{host}]({url.replace('(', '%28').replace(')', '%29').replace(' ', '%20')})"
+    """The offer link as a bare URL: Narra turns bare URLs into links but shows Markdown link syntax as raw text."""
+    return (url or '').replace(' ', '%20')
 
 
 MD_LINK = re.compile(r'\[([^\]]+)\]\((https?://[^)\s]+)\)')
@@ -1008,7 +1006,7 @@ CODE = re.compile(r'`([^`\n]+)`')
 
 
 def to_html(body):
-    """formatted_body for Matrix clients that show HTML instead of Markdown: the same links and code style.
+    """formatted_body for Matrix clients that show HTML (Narra shows the plain body): links named after the site.
     None when there is nothing to format."""
     if not body or not (URL.search(body) or CODE.search(body)):
         return None
