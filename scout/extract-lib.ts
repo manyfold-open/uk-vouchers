@@ -48,8 +48,15 @@ const NOT_CODES = new Set(
   CONDITIONS APPLY ONLY ALL AND THE FOR WITH YOUR OUR USE ENTER CHECKOUT BASKET ORDER ORDERS SIGN JOIN MORE INFO
   HERE CLICK TAP SPEND OFFER OFFERS DEAL DEALS LIMITED TIME TODAY EXCLUSIVE MEMBERS MEMBER ACCOUNT EMAIL NEXT DAY
   STANDARD FAQ FAQS HELP COOKIES PRIVACY POLICY LOGIN LOG IN OUT BAG CART UNIDAYS TOTUM ASOS HTML CSS JSON
-  SIZE GUIDE RETURNS ENJOY HERE NEW-IN EXPIRY DATE PROMOTION PROMOTIONS`.split(/\s+/),
+  SIZE GUIDE RETURNS ENJOY HERE NEW-IN EXPIRY DATE PROMOTION PROMOTIONS REQUIRED NEEDED NECESSARY B2B B2C`.split(/\s+/),
 );
+
+/**
+ * Tokens shaped like a UK postcode district or a range of them ("EC4M", "SW1A", "B33", "PO30-PO41"),
+ * which delivery pages and PayPal's footer are full of. Also catches phone and console model names
+ * of the same shape ("S25", "A72"). Codes this short with no word in them are rare.
+ */
+const POSTCODE_LIKE = /^[A-Z]{1,2}\d{1,2}[A-Z]?(?:-[A-Z]{1,2}\d{1,2}[A-Z]?)?$/;
 
 const CODE_TOKEN = /\b([A-Z][A-Z0-9]{2,19}(?:-[A-Z0-9]{2,10})?|[0-9]{2,6}[A-Z][A-Z0-9]{1,15})\b/g;
 const CODE_WORD = /\b(?:promo|discount|voucher|coupon|offer)?\s*codes?\b|\buse\b|\benter\b|\bapply\b/i;
@@ -139,13 +146,21 @@ export function extractOffers(html: string, pageUrl: string, today = new Date().
   const codes = new Map<string, CodeCandidate>();
   const offers: OfferCandidate[] = [];
   const occurrences = (code: string) => html.split(code).length - 1;
+  // The shop's own name ("Use SMARTY to hotspot…" on smarty.co.uk) is not a code.
+  const siteName = (() => {
+    try {
+      return new URL(pageUrl).hostname.replace(/^(?:www|uk|shop)\./, '').split('.')[0].toUpperCase();
+    } catch {
+      return '';
+    }
+  })();
 
   lines.forEach((line, i) => {
     const near = lines.slice(i, i + 3);
     if (CODE_WORD.test(line)) {
       for (const m of line.matchAll(CODE_TOKEN)) {
         const token = m[1];
-        if (NOT_CODES.has(token) || /^\d+$/.test(token) || /^(?:[A-Z]{2,3}\d{1,2}|\d+(?:ML|G|KG|CM|MM|GB|TB|HZ|W))$/.test(token)) continue;
+        if (NOT_CODES.has(token) || token === siteName || POSTCODE_LIKE.test(token) || /^\d+$/.test(token) || /^(?:[A-Z]{2,3}\d{1,2}|\d+(?:ML|G|KG|CM|MM|GB|TB|HZ|W))$/.test(token)) continue;
         const before = line.slice(Math.max(0, m.index! - 40), m.index!);
         const nearCodeWord = /\b(?:code|use|enter|apply)\b[\s:'"“‘]*$/i.test(before) || /code[:\s]*['"“‘]?$/i.test(before);
         const hasDigitAndLetter = /\d/.test(token) && /[A-Z]/.test(token);

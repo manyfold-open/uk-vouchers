@@ -98,3 +98,14 @@ it('leaves site chrome out of a code’s context', () => {
 it('offerLinks ignores other sites', () => {
   expect(offerLinks('<a href="https://other.com/offers">Offers</a>', 'https://www.shop.co.uk/')).toEqual([]);
 });
+
+it('skips postcodes, model names, "no code required" and the shop’s own name, but keeps real codes', () => {
+  const page = `<p>Use code 25OCADO at checkout. Credit is a trading name of PayPal UK Ltd, 5 Fleet Place, London, EC4M 7RD, use code at checkout</p>
+    <p>Next day delivery excludes postcodes: PO30-PO41, TR21-TR25 and HS1 - use code FREEDEL for free delivery</p>
+    <p>Trade in a Galaxy S25 or A72 and use code GALAXYTAB at checkout</p>
+    <p>40% OFF ALMOST EVERYTHING. NO CODE REQUIRED.</p>
+    <p>Use SMARTY to hotspot on your phone</p>`;
+  const codes = extractOffers(page, 'https://smarty.co.uk/offers', '2026-11-18').codes.map((c) => c.code);
+  expect(codes).toEqual(expect.arrayContaining(['25OCADO', 'FREEDEL', 'GALAXYTAB']));
+  for (const junk of ['EC4M', 'PO30-PO41', 'TR21-TR25', 'HS1', 'S25', 'A72', 'REQUIRED', 'SMARTY']) expect(codes).not.toContain(junk);
+});
