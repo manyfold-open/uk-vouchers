@@ -58,6 +58,11 @@ CAPTION = os.getenv('QUIDPAW_CARD_CAPTION') == '1'  # card + codes in one m.imag
 BEST = {}                      # lang -> (ts, offers): the last good "best right now" list, for when the API is down
 NAME = re.compile(r'@?quidpaw(?![\w])', re.I)  # stripped from the text; a mention itself must be m.mentions or a reply (Narra's rule)
 NOTIFY_EVERY = 10 * 60
+UNMENTIONED_ENABLED = os.getenv('QUIDPAW_UNMENTIONED', '1') != '0'
+UNMENTIONED_COOLDOWN_SEC = 30.0
+UNMENTIONED_SESSION_SEC = 180.0
+UNMENTIONED_YIELD_SEC = 1.8
+LAST_AUTO_SESSION = {}         # (room, sender) -> unix timestamp of recent Quidpaw exchange
 
 
 def request(url, data=None, token=None, method=None, raw=False):
@@ -128,12 +133,12 @@ def user_zh(user, fallback_text=''):
 
 
 def room_state(room):
-    row = DB.execute('select lang,welcomed,paused from rooms where room=?', (room,)).fetchone()
+    row = DB.execute('select lang,welcomed,paused,last_auto from rooms where room=?', (room,)).fetchone()
     if not row:
         DB.execute('insert or ignore into rooms(room) values(?)', (room,))
         DB.commit()
-        row = (None, 0, 0)
-    return {'lang': norm_lang(row[0]) if row[0] else None, 'welcomed': bool(row[1]), 'paused': bool(row[2])}
+        row = (None, 0, 0, 0.0)
+    return {'lang': norm_lang(row[0]) if row[0] else None, 'welcomed': bool(row[1]), 'paused': bool(row[2]), 'last_auto': float(row[3] or 0.0)}
 
 
 def set_room(room, **kw):
@@ -391,6 +396,97 @@ async def authorize(room, event, members, mentioned):
         return {}
 
 
+def deterministic_uuid4(seed):
+    """Deterministic UUID v4-formatted txn_id required by Narra chat proxy send."""
+    b = bytearray(hashlib.sha256(('quidpaw-proxy:' + str(seed)).encode()).digest()[:16])
+    b[6] = (b[6] & 0x0f) | 0x40
+    b[8] = (b[8] & 0x3f) | 0x80
+    h = b.hex()
+    return f'{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}'
+
+
+def has_active_session(room, sender, now=None):
+    now = time.time() if now is None else now
+    ts = LAST_AUTO_SESSION.get((room, sender)) or 0.0
+    if now - ts <= UNMENTIONED_SESSION_SEC:
+        return True
+    row = DB.execute('select max(ts) from shown where room=? and user=?', (room, sender)).fetchone()
+    return bool(row and row[0] and (now - float(row[0])) <= UNMENTIONED_SESSION_SEC)
+
+
+async def chat_proxy_authorize_group_member(room, sender):
+    """Server-side fail-closed authorization check via Narra chat/room proxy for unmentioned group turns."""
+    try:
+        res = await http(API + '/api/agent-runtime/chat/room?' + urlencode({'room_id': room, 'include_members': 'true'}), token=TOKEN)
+    except Exception:
+        return False
+    if not isinstance(res, dict) or res.get('status') != 'ok':
+        return False
+    rm = (res.get('data') or {}).get('room') or {}
+    if rm.get('conversation_type') != 'group':
+        return False
+    members = rm.get('members') or []
+    return any(isinstance(m, dict) and m.get('matrix_user_id') == sender for m in members)
+
+
+async def has_live_peer_replied_after(room, target_eid, target_ts_ms=0):
+    """True when another @agent-* replied after target_eid (anti-pile-on) or target_eid was redacted."""
+    chunk = []
+    try:
+        res = await http(API + '/api/agent-runtime/chat/messages?' + urlencode({'room_id': room, 'dir': 'b', 'limit': '10'}), token=TOKEN)
+        if isinstance(res, dict) and res.get('status') == 'ok':
+            data = res.get('data') or {}
+            chunk = (data.get('raw_matrix') or {}).get('chunk') or data.get('messages') or []
+    except Exception:
+        chunk = []
+    if not chunk:
+        try:
+            chunk = ((await matrix('/rooms/' + esc(room) + '/messages?' + urlencode({'dir': 'b', 'limit': '10'}))) or {}).get('chunk') or []
+        except Exception:
+            return False
+    for ev in chunk:
+        if not isinstance(ev, dict):
+            continue
+        ev_id = ev.get('event_id')
+        if ev_id == target_eid:
+            if (ev.get('unsigned') or {}).get('redacted_because'):
+                return True
+            break
+        ev_ts = ev.get('origin_server_ts') or 0
+        if target_ts_ms and ev_ts and ev_ts < target_ts_ms:
+            break
+        if (ev.get('unsigned') or {}).get('redacted_because'):
+            continue
+        ev_typ = ev.get('type') or 'm.room.message'
+        if ev_typ != 'm.room.message':
+            continue
+        ev_content = ev.get('content') or {}
+        if (ev_content.get('ai.netmind.visibility') or {}).get('status') == 'hidden':
+            continue
+        ev_sender = ev.get('sender') or ''
+        if ev_sender and ev_sender != USER and ev_sender.startswith('@agent-'):
+            return True
+    return False
+
+
+async def send_via_narra_proxy(room, body, eid):
+    """Post an authorized group reply through Narra chat/send and record own event_id for follow-up replies."""
+    res = await http(
+        API + '/api/agent-runtime/chat/send',
+        {'room_id': room, 'text': body, 'txn_id': deterministic_uuid4(eid)},
+        token=TOKEN,
+    )
+    if not isinstance(res, dict) or res.get('status') != 'ok':
+        raise RuntimeError('Narra chat proxy send failed')
+    data = res.get('data') or {}
+    bot_eid = data.get('event_id')
+    if bot_eid:
+        DB.execute('insert or ignore into own values(?,?,?)', (bot_eid, room, time.time()))
+        DB.execute('delete from own where room=? and id not in (select id from own where room=? order by ts desc limit 30)', (room, room))
+        DB.commit()
+    return data
+
+
 async def deliver_pending():
     for eid, room, payload in DB.execute('select id,room,payload from replies where sent=0').fetchall():
         pending = DB.execute('select event from pending where id=?', (eid,)).fetchone()
@@ -537,24 +633,32 @@ async def reply(room, event, context, attachment=None, source_eids=None, parent_
 
 async def _reply(room, event, context, attachment=None, source_eids=None, parent_snippet=None):
     content = event['content']; eid = event['event_id']; voice = content.get('ai.netmind.rtc.agent.turn.started.v2')
-    group = bool(context and context.get('group')); user = event.get('sender', '')
+    group = bool(context and context.get('group')); unmentioned = bool(context and context.get('unmentioned')); user = event.get('sender', '')
     if user == USER or user.startswith('@agent-') or is_redacted(eid, source_eids):
         DB.execute('delete from pending where id=?', (eid,)); DB.commit()
         return
-    typer = None if voice else asyncio.create_task(keep_typing(room))
+    typer = None
     try:
+        if unmentioned:
+            if UNMENTIONED_YIELD_SEC > 0:
+                await asyncio.sleep(UNMENTIONED_YIELD_SEC)
+            if is_redacted(eid, source_eids) or await has_live_peer_replied_after(room, eid, event.get('origin_server_ts') or 0):
+                DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+                logging.info('Yielded unmentioned message before inference')
+                return
+        typer = None if voice else asyncio.create_task(keep_typing(room))
         raw_text = clean(voice.get('transcript', content.get('body', '')) if voice else content.get('body', ''))
         effective_text = f'[Replied message: {parent_snippet}]\n{raw_text}' if parent_snippet else raw_text
         # A group's language is only fixed by 「@Quidpaw 說繁體 / 說簡體 / 說英文」; otherwise each message picks its own.
         st = room_state(room)
         room_lang = st['lang'] if group else None
         result = None
-        cmd = command(room, raw_text) if group else None
+        cmd = command(room, raw_text) if (group and not unmentioned) else None
         if cmd is not None:
             body = cmd
             res_lang = room_state(room)['lang'] or Brain.language(raw_text, [])
         else:
-            m_cmd = mute_command(room, raw_text, room_lang or Brain.language(raw_text, [])) if group else None
+            m_cmd = mute_command(room, raw_text, room_lang or Brain.language(raw_text, [])) if (group and not unmentioned) else None
             if m_cmd is not None:
                 body = m_cmd
                 res_lang = room_lang or Brain.language(raw_text, [])
@@ -566,6 +670,10 @@ async def _reply(room, event, context, attachment=None, source_eids=None, parent
                 ctx.update(history=past, attachment=attachment, lang=room_lang, voice=bool(voice), reply_to=parent_snippet,
                            reported=[r[0] for r in DB.execute('select voucher_id from reports where user=? and resolved=0', (user,)).fetchall()])
                 result = await BRAIN.respond(effective_text, ctx)
+                if unmentioned and (not result or (not result.get('offers') and result.get('query') is None and not result.get('actions'))):
+                    DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+                    logging.info('Suppressed non-deal unmentioned fallback')
+                    return
                 res_lang = norm_lang(result.get('lang') or room_lang or user_lang(user, raw_text), 'zh-Hant')
                 result['reported_from'] = ctx.get('replied') or (ctx.get('last') or {}).get('offers')
                 if not group:
@@ -579,6 +687,27 @@ async def _reply(room, event, context, attachment=None, source_eids=None, parent
                                json.dumps(result.get('query')) if result.get('query') is not None else None, result.get('page', 1), result.get('total', 0), time.time()))
         if is_redacted(eid, source_eids):
             DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+            return
+        if unmentioned:
+            if await has_live_peer_replied_after(room, eid, event.get('origin_server_ts') or 0):
+                DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+                logging.info('Yielded unmentioned message after peer reply')
+                return
+            out_body = ((result.get('text') if result else None) or body).strip()
+            if not out_body:
+                DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+                return
+            sent_data = await send_via_narra_proxy(room, out_body, eid)
+            bot_eid = sent_data.get('event_id')
+            DB.execute('insert or replace into replies(id,room,payload,sent) values(?,?,?,1)', (eid, room, json.dumps({'msgtype': 'm.text', 'body': out_body})))
+            if bot_eid:
+                DB.execute('update shown set bot=? where src=?', (bot_eid, eid))
+            DB.execute('delete from pending where id=?', (eid,))
+            DB.commit()
+            now_ts = time.time()
+            set_room(room, last_auto=now_ts)
+            LAST_AUTO_SESSION[(room, user)] = now_ts
+            logging.info('Answered unmentioned group message via Narra chat proxy')
             return
         # Refresh room state (in case mute/unmute just updated it)
         st_now = room_state(room)
@@ -628,6 +757,8 @@ async def _reply(room, event, context, attachment=None, source_eids=None, parent
         await deliver_pending()
         DB.execute('delete from pending where id=?', (eid,))
         DB.commit()
+        if group:
+            LAST_AUTO_SESSION[(room, user)] = time.time()
         logging.info('Answered authorized message')
         if voice and result and result.get('full_text'):
             # Spoken answer stays short; links and the full list go to the chat as plain text.
@@ -639,6 +770,10 @@ async def _reply(room, event, context, attachment=None, source_eids=None, parent
     except Exception as e:
         if is_redacted(eid, source_eids):
             DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+            return
+        if unmentioned:
+            DB.execute('delete from pending where id=?', (eid,)); DB.commit()
+            logging.warning('Unmentioned reply suppressed after error: %s', type(e).__name__)
             return
         logging.error('Reply failed: %s', type(e).__name__)
         payload = text_content(error_text(room, user, group, content.get('body', ''), voice))
@@ -849,6 +984,32 @@ async def handle(room, event, members):
     if late and group:
         return  # an old group question would only confuse the room; a DM still gets its answer
     if auth.get('allow') is not True:
+        if (
+            UNMENTIONED_ENABLED
+            and not mention
+            and auth.get('reason') == 'not_mentioned'
+            and auth.get('roomKind') == 'group'
+            and not rtc
+            and not image
+            and not c.get('ai.netmind.hint')
+            and not late
+            and typ == 'm.room.message'
+            and c.get('msgtype') == 'm.text'
+            and c.get('ai.netmind.visibility', {}).get('status') != 'hidden'
+        ):
+            if not (c.get('m.mentions') or {}).get('user_ids') and not (c.get('body') or '').lstrip().startswith('@'):
+                if not (DB.execute('select 1 from replies where id=?', (eid,)).fetchone() or eid in TASKS or eid in REDACTED):
+                    st_room = room_state(room)
+                    if not st_room['paused']:
+                        user_text = clean(c.get('body', ''))
+                        active_session = has_active_session(room, sender)
+                        if active_session or (time.time() - st_room['last_auto']) >= UNMENTIONED_COOLDOWN_SEC:
+                            has_pending_sub = bool(DB.execute('select 1 from pending_sub where room=? and user=? and ts>?', (room, sender, time.time() - 3600)).fetchone())
+                            if await BRAIN.should_reply_unmentioned(user_text, active_session=active_session, has_pending_sub=has_pending_sub):
+                                if await chat_proxy_authorize_group_member(room, sender):
+                                    parent_snippet = await fetch_reply_context(room, c)
+                                    _spawn_reply(room, event, {'group': True, 'late': False, 'unmentioned': True}, None, [eid], parent_snippet)
+                                    return
         notice = auth.get('notice', {})
         if notice.get('send') is True and notice.get('text'):
             await send(room, 'm.room.message', {'msgtype': 'm.notice', 'body': notice['text']}, 'denied-' + hashlib.sha256(eid.encode()).hexdigest())

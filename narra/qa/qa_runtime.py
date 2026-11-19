@@ -140,7 +140,9 @@ class FakeMatrixMixin:
         rt.TASKS.clear()
         rt.LOCKS.clear()
         rt.BEST.clear()
+        rt.LAST_AUTO_SESSION.clear()
         rt.BURST_SEC = 0.0  # override per test when testing burst debounce
+        rt.UNMENTIONED_YIELD_SEC = 0.0
         rt.CAPTION = False
         self.sent = []
         self.room_events = {}
@@ -148,6 +150,11 @@ class FakeMatrixMixin:
         self.plan_queue = []
         self.auth_kind = 'group'
         self.auth_allow = True
+        self.auth_reason = None
+        self.proxy_room_allow = True
+        self.proxy_members = ['@alice:netmind.chat', '@bob:netmind.chat', rt.USER]
+        self.proxy_messages = []
+        self.proxy_sent = []
         self.card_png_calls = []
 
         async def fake_matrix(path, data=None, method=None):
@@ -169,9 +176,40 @@ class FakeMatrixMixin:
             return {}
 
         async def fake_authorize(room, event, members, mentioned):
-            if self.auth_kind == 'dm':
-                return {'allow': self.auth_allow, 'roomKind': 'dm'}
-            return {'allow': self.auth_allow, 'roomKind': 'group'}
+            out = {'allow': self.auth_allow, 'roomKind': 'dm' if self.auth_kind == 'dm' else 'group'}
+            if not self.auth_allow and self.auth_reason:
+                out['reason'] = self.auth_reason
+            return out
+
+        async def fake_http(url, data=None, token=None, method=None, raw=False):
+            if '/api/agent-runtime/chat/room' in url:
+                if not self.proxy_room_allow:
+                    return {'status': 'error', 'issues': [{'code': 'agent-room-access-denied'}]}
+                return {
+                    'status': 'ok',
+                    'data': {
+                        'room': {
+                            'conversation_type': 'group',
+                            'members': [{'matrix_user_id': m} for m in self.proxy_members],
+                        }
+                    },
+                }
+            if '/api/agent-runtime/chat/messages' in url:
+                return {
+                    'status': 'ok',
+                    'data': {
+                        'messages': list(self.proxy_messages),
+                        'raw_matrix': {'chunk': list(self.proxy_messages)},
+                    },
+                }
+            if '/api/agent-runtime/chat/send' in url:
+                import re
+                txn = (data or {}).get('txn_id') or ''
+                assert re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', txn), f'bad uuid4: {txn}'
+                eid = f'$proxy_{len(self.proxy_sent) + 1}'
+                self.proxy_sent.append({'room_id': data['room_id'], 'text': data['text'], 'txn_id': txn, 'event_id': eid})
+                return {'status': 'ok', 'data': {'event_id': eid}}
+            return await fake_api_http(url, data, token, method, raw)
 
         async def fake_model(prompt, attachment=None):
             self.prompts.append(prompt)
@@ -190,9 +228,9 @@ class FakeMatrixMixin:
 
         rt.matrix = fake_matrix
         rt.authorize = fake_authorize
-        rt.http = fake_api_http
-        rt.BRAIN = qp.Brain(fake_api_http, fake_model, 'https://api.invalid')
-        rt.NOTIFIER.http = fake_api_http
+        rt.http = fake_http
+        rt.BRAIN = qp.Brain(fake_http, fake_model, 'https://api.invalid')
+        rt.NOTIFIER.http = fake_http
         rt.card_image = fake_card_image
 
 
@@ -586,6 +624,178 @@ class TestRuntimeGroupIntelligence(unittest.IsolatedAsyncioTestCase, FakeMatrixM
         await asyncio.sleep(0.05)
         self.assertFalse(rt.room_state(room)['paused'])
         self.assertGreater(len(self.sent), 0)
+
+    async def test_unmentioned_fail_closed_for_non_mention_denials(self):
+        room = '!grp:netmind.chat'
+        members = ['@alice:netmind.chat', '@bob:netmind.chat', rt.USER]
+        now_ms = int(time.time() * 1000)
+
+        for kind, reason in (
+            ('group', 'sender_blocked'),
+            ('group', 'agent_suspended'),
+            ('group', 'not_group_member'),
+            ('dm', 'no_agent_request'),
+        ):
+            self.sent.clear()
+            self.proxy_sent.clear()
+            self.auth_kind = kind
+            self.auth_allow = False
+            self.auth_reason = reason
+            ev = {
+                'type': 'm.room.message', 'event_id': f'$deny_{reason}', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms,
+                'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+            }
+            await rt.handle(room, ev, members)
+            await asyncio.sleep(0.05)
+            self.assertEqual(len(self.sent), 0)
+            self.assertEqual(len(self.proxy_sent), 0)
+
+        # Even on not_mentioned group, fail closed if chat/room refuses or omits sender
+        self.auth_kind = 'group'
+        self.auth_allow = False
+        self.auth_reason = 'not_mentioned'
+        self.proxy_room_allow = False
+        await rt.handle(room, {
+            'type': 'm.room.message', 'event_id': '$proxy_deny1', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 1,
+            'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+        }, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 0)
+
+        self.proxy_room_allow = True
+        self.proxy_members = ['@bob:netmind.chat', rt.USER]  # sender missing from chat/room members
+        await rt.handle(room, {
+            'type': 'm.room.message', 'event_id': '$proxy_deny2', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 2,
+            'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+        }, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 0)
+
+    async def test_unmentioned_traps_silence_and_peer_anti_pile_on(self):
+        room = '!grp:netmind.chat'
+        members = ['@alice:netmind.chat', '@bob:netmind.chat', rt.USER]
+        now_ms = int(time.time() * 1000)
+        self.auth_kind = 'group'
+        self.auth_allow = False
+        self.auth_reason = 'not_mentioned'
+
+        traps = [
+            ('past_boots', '昨晚在 Boots 買了一堆保養品打八折超爽', {}),
+            ('bare_boots', '等下去 Boots 拿藥', {}),
+            ('penny_split', '剛剛在 Boots 買了 £24 衛生紙幫大家平分', {}),
+            ('food_peer', '好餓喔，等下在 Soho 附近有沒有推薦吃的？', {}),
+            ('tarot_peer', '最近工作好猶豫要不要換跑道，好想有個方向參考', {}),
+            ('popup_peer', '這週末不知道帶朋友去倫敦哪裡逛逛比較特別', {}),
+            ('ai_hackathon', '下個月倫敦有什麼 AI 黑客松可以報名嗎？', {}),
+            ('other_bot_at', '@OtherBot 你幫我看一下 Boots', {'m.mentions': {'user_ids': ['@agent-other:netmind.chat']}}),
+        ]
+        for idx, (tag, body, extra) in enumerate(traps):
+            ev = {
+                'type': 'm.room.message', 'event_id': f'$trap_{tag}', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + idx,
+                'content': {'msgtype': 'm.text', 'body': body, **extra},
+            }
+            await rt.handle(room, ev, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 0)
+        self.assertEqual(len(self.sent), 0)
+
+        # Muted room stays completely silent unmentioned
+        rt.set_room(room, paused=1)
+        await rt.handle(room, {
+            'type': 'm.room.message', 'event_id': '$trap_muted', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 50,
+            'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+        }, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 0)
+        rt.set_room(room, paused=0)
+
+        # Peer agent already replied after event_id -> yields silently!
+        self.proxy_messages = [
+            {'event_id': '$peer_reply', 'sender': '@agent-peer:matrix.netmind.chat', 'origin_server_ts': now_ms + 101, 'type': 'm.room.message', 'content': {'msgtype': 'm.text', 'body': 'Peer answered'}},
+            {'event_id': '$peer_q', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 100, 'type': 'm.room.message', 'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'}},
+        ]
+        await rt.handle(room, {
+            'type': 'm.room.message', 'event_id': '$peer_q', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 100,
+            'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+        }, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 0)
+
+    async def test_unmentioned_positive_active_session_cooldown_and_fallback_suppression(self):
+        room = '!grp:netmind.chat'
+        members = ['@alice:netmind.chat', '@bob:netmind.chat', rt.USER]
+        now_ms = int(time.time() * 1000)
+        self.auth_kind = 'group'
+        self.auth_allow = False
+        self.auth_reason = 'not_mentioned'
+
+        # 1. Cold-start Boots deal query without @ -> replies via Narra chat/send (clean text, zero PNG card)
+        self.plan_queue.append({'intent': 'search', 'retailer': 'boots'})
+        e1 = {
+            'type': 'm.room.message', 'event_id': '$pos1', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms,
+            'content': {'msgtype': 'm.text', 'body': '最近想在 Boots 買保養品，有沒有折扣碼或學生優惠啊？'},
+        }
+        await rt.handle(room, e1, members)
+        await asyncio.sleep(0.08)
+        self.assertEqual(len(self.proxy_sent), 1)
+        self.assertEqual(len(self.card_png_calls), 0)
+        self.assertIn('Boots', self.proxy_sent[0]['text'])
+        self.assertIn('GLOW20', self.proxy_sent[0]['text'])
+
+        # 2. Immediate active_session follow-up ("那一般人的呢？") within 180s -> bypasses 30s cooldown & carries Boots!
+        self.plan_queue.append({'intent': 'search', 'retailer': 'boots', 'eligibility': 'everyone'})
+        e2 = {
+            'type': 'm.room.message', 'event_id': '$pos2', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 50,
+            'content': {'msgtype': 'm.text', 'body': '那一般人的呢？'},
+        }
+        await rt.handle(room, e2, members)
+        await asyncio.sleep(0.08)
+        self.assertEqual(len(self.proxy_sent), 2)
+        self.assertIn('Boots', self.proxy_sent[1]['text'])
+
+        # 3. Immediate closing remark after active_session -> 0 replies!
+        e3 = {
+            'type': 'm.room.message', 'event_id': '$pos3_close', 'sender': '@alice:netmind.chat', 'origin_server_ts': now_ms + 100,
+            'content': {'msgtype': 'm.text', 'body': '謝啦那我等下上網結帳'},
+        }
+        await rt.handle(room, e3, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 2)
+
+        # 4. Second user (@bob) cold-start unmentioned ask within 30s cooldown -> suppressed by room cooldown!
+        e4 = {
+            'type': 'm.room.message', 'event_id': '$pos4_cooldown', 'sender': '@bob:netmind.chat', 'origin_server_ts': now_ms + 150,
+            'content': {'msgtype': 'm.text', 'body': 'ASOS 這件外套有點貴，有沒有辦法買便宜一點？'},
+        }
+        await rt.handle(room, e4, members)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.proxy_sent), 2)
+
+        # 5. Advance room last_auto beyond 30s -> ASOS price-sensitive query replies, AND non-deal fallback is suppressed silently!
+        rt.set_room(room, last_auto=time.time() - 60.0)
+        self.plan_queue.append({'intent': 'search', 'retailer': 'asos'})
+        e5 = {
+            'type': 'm.room.message', 'event_id': '$pos5_asos', 'sender': '@bob:netmind.chat', 'origin_server_ts': now_ms + 200,
+            'content': {'msgtype': 'm.text', 'body': 'ASOS 這件外套有點貴，有沒有辦法買便宜一點？'},
+        }
+        await rt.handle(room, e5, members)
+        await asyncio.sleep(0.08)
+        self.assertEqual(len(self.proxy_sent), 3)
+        self.assertIn('ASOS', self.proxy_sent[2]['text'])
+
+        # 6. If planner falls back to generic non-deal chat ('我只找英國折扣喔'), unmentioned reply suppresses silently!
+        rt.set_room(room, last_auto=time.time() - 60.0)
+        rt.LAST_AUTO_SESSION.clear()
+        self.plan_queue.append({'intent': 'chat', 'line': '我只找英國折扣喔 🐾'})
+        e6 = {
+            'type': 'm.room.message', 'event_id': '$pos6_chat', 'sender': '@bob:netmind.chat', 'origin_server_ts': now_ms + 300,
+            'content': {'msgtype': 'm.text', 'body': '有沒有什麼便宜一點買英國東西的優惠碼？'},
+        }
+        # Give a long residual sentence so BRAIN hits planner -> chat fallback
+        e6['content']['body'] = '聽說有個很神秘的網站不知怎麼省錢，有沒有優惠碼？'
+        await rt.handle(room, e6, members)
+        await asyncio.sleep(0.08)
+        self.assertEqual(len(self.proxy_sent), 3)
 
 
 if __name__ == '__main__':
