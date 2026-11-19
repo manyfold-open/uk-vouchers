@@ -181,6 +181,15 @@ CASES = [
     ('uber eats 新客碼', N, 'search', dict(r='uber eats', e='new-customer')),
     ('你係咪機械人', N, 'text', {}),
     ('有冇平嘢買', N, 'browse', {}),
+    # --- Simplified Chinese (zh-Hans) ---
+    ('开启每日精选', N, 'daily_on', {}),
+    ('每日精选不要了', N, 'daily_off', {}),
+    ('我在 ASOS 试了这个码 ASOS20 有效', N, 'tip', {}),
+    ('第2个用不了', LAST, 'report', dict(ids=['a2'])),
+    ('我是学生，有 asos 的吗', N, 'identity', dict(r='asos')),
+    ('取消 Boots 的通知', N, 'unsubscribe', dict(unsub='boots')),
+    ('关闭大促提醒', N, 'sales_off', {}),
+    ('运动用品有折扣吗', N, 'search', dict(c='sports')),
 ]
 
 
@@ -199,10 +208,10 @@ def classify(out):
             return {'weekly': 'weekly_on', 'daily': 'daily_on', 'sales': 'sales_on'}.get(k, 'subscribe'), a
     t = out.get('text', '')
     if t.startswith(('Which shop or category', '要通知哪家店')): return 'subask', None
-    if t.startswith(('Which one failed', '是哪一個不能用')): return 'which', None
-    if t.startswith(('Thanks! Which shop', 'Thanks! What is the', '謝謝分享！這是哪家店')) or '的碼是哪幾個字' in t: return 'tipask', None
-    if t.startswith(("I haven't shown you a list", '我這裡還沒有給你看過清單')): return 'nolist', None
-    if t.startswith(('Your alerts', '你的通知', 'No alerts yet', '你還沒有訂閱')): return 'mysubs', None
+    if t.startswith(('Which one failed', '是哪一個不能用', '是哪一个不能用')): return 'which', None
+    if t.startswith(('Thanks! Which shop', 'Thanks! What is the', '謝謝分享！這是哪家店', '谢谢分享！这是哪家店')) or '的碼是哪幾個字' in t or '的码是哪几个字' in t: return 'tipask', None
+    if t.startswith(("I haven't shown you a list", '我這裡還沒有給你看過清單', '我这里还没有给你看过清单')): return 'nolist', None
+    if t.startswith(('Your alerts', '你的通知', 'No alerts yet', '你還沒有訂閱', '你还没有订阅')): return 'mysubs', None
     demand = next((a['demand'] for a in acts if 'demand' in a), None)
     if out.get('page', 1) > 1: return 'more', None
     if demand: return 'search', demand

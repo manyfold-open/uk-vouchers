@@ -21,19 +21,24 @@ def check(name, cond, detail):
     global fails; fails += not cond; print('ok  ' if cond else 'FAIL', name, '|', detail)
 async def main():
     # TC07: no ASOS offers -> fallback list; planner drops the shop on "那學生的呢"
-    r1 = await b.respond('ASOS 有什麼碼', {'history': []})
+    async def empty_shop_http(u):
+        if '/api/vouchers?' in u and 'retailer=asos' in u:
+            return {'vouchers': [], 'total': 0}
+        return await http(u)
+    b_empty = Brain(empty_shop_http, model, API)
+    r1 = await b_empty.respond('ASOS 有什麼碼', {'history': []})
     last = {'offers': r1['offers'], 'query': r1['query'], 'page': 1}
     check('asked kept', r1['query'].get('_asked') == {'retailer': 'asos'}, r1['query'])
     PLANS.append({'intent': 'search', 'eligibility': 'student', 'line': '學生優惠：'})
-    r2 = await b.respond('那學生的呢', {'history': [{'who':'user','text':'ASOS 有什麼碼'},{'who':'bot','text':r1['text'][:300]}], 'last': last})
+    r2 = await b_empty.respond('那學生的呢', {'history': [{'who':'user','text':'ASOS 有什麼碼'},{'who':'bot','text':r1['text'][:300]}], 'last': last})
     check('follow-up keeps ASOS', 'ASOS' in r2['text'].split('\n')[0], r2['text'].split('\n')[0])
     check('planner sees last_request', '"last_request": {"retailer": "asos"}' in PROMPTS[-1], 'prompt state')
     # "notify me" after a no-result search subscribes to the asked shop, not the fallback category
     PLANS.append({'intent': 'subscribe'})
-    r3 = await b.respond('有的話通知我', {'history': [], 'last': last})
+    r3 = await b_empty.respond('有的話通知我', {'history': [], 'last': last})
     check('subscribe to asked shop', any(a.get('subscribe', {}).get('value') == 'asos' for a in r3['actions']), r3['actions'])
     # more after no-result still pages the alternatives
-    r4 = await b.respond('更多', {'history': [], 'last': last})
+    r4 = await b_empty.respond('更多', {'history': [], 'last': last})
     check('more still works', bool(r4['offers']) or '沒有更多' in r4['text'], r4['text'].split('\n')[0])
     # TC11: chat line ending in a colon
     PLANS.append({'intent': 'chat', 'category': 'travel', 'line': '我不能訂機票，但可以找旅遊優惠碼：'})

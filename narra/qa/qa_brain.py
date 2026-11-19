@@ -8,7 +8,7 @@ import argparse, asyncio, json, re, subprocess, sys, time
 from pathlib import Path
 from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from quidpaw import Brain, CJK
+from quidpaw import Brain, CJK, _ZH_HANS_ONLY, _ZH_HANT_ONLY
 
 API = 'https://uk-vouchers.netmind-ai.workers.dev'
 ap = argparse.ArgumentParser(); ap.add_argument('--profile', default='manyfold'); ap.add_argument('--agent', default='agt_agq6ji22sn6jpd5nnicl5ld7rm')
@@ -77,6 +77,19 @@ CASES = [
     ('let me know when Boots has a new code', [], dict(lang='en', kind='text', must='Boots')),
     ('tell me any deals at Tesco', [], dict(lang='en', kind='offers')),
     ('提醒我 Black Friday', [], dict(lang='zh', kind='text', must='黑色星期五')),
+    # --- Simplified Chinese (zh-Hans) ---
+    ('Boots 有什么码？', [], dict(lang='zh-Hans', kind='offers', must='Boots')),
+    ('美妆今天有什么', [], dict(lang='zh-Hans', kind='offers')),
+    ('那学生的呢', [U('美妆今天有什么'), B('1. LOOKFANTASTIC｜黑色星期五')], dict(lang='zh-Hans', kind='offers', must='学生')),
+    ('boots', [U('最近有啥优惠码')], dict(lang='zh-Hans', kind='offers', must='Boots')),
+    ('你好', [U('帮我找优惠')], dict(lang='zh-Hans', kind='offers', must='英国省钱小助手')),
+    ('你会什么', [], dict(lang='zh-Hans', kind='text', must='Quidpaw 可以帮你')),
+    ('谢谢', [], dict(lang='zh-Hans', kind='text', must='不客气')),
+    ('开启每日精选', [], dict(lang='zh-Hans', kind='text', must='每天')),
+    ('开启周报', [], dict(lang='zh-Hans', kind='text', must='每周一')),
+    ('我是学生', [], dict(lang='zh-Hans', kind='offers', must='通知你吗')),
+    ('停止通知', [U('帮我找优惠')], dict(lang='zh-Hans', kind='text', must='取消')),
+    ('别再通知了', [], dict(lang='zh-Hans', kind='text', must='取消')),
 ]
 
 async def main():
@@ -92,14 +105,18 @@ async def main():
         dt = time.time() - t; used = len(MODEL_CALLS) > n
         problems = []
         if out.startswith('!!'): problems.append('crashed')
-        if exp.get('lang') == 'zh' and not CJK.search(out): problems.append('not Chinese')
+        if exp.get('lang') in ('zh', 'zh-Hant') and not CJK.search(out): problems.append('not Chinese')
+        if exp.get('lang') == 'zh-Hant' and _ZH_HANS_ONLY.search(out): problems.append('has zh-Hans chars in zh-Hant')
+        if exp.get('lang') == 'zh-Hans':
+            if not CJK.search(out): problems.append('not Chinese')
+            if _ZH_HANT_ONLY.search(out): problems.append('has zh-Hant chars in zh-Hans')
         if exp.get('lang') == 'en' and len(CJK.findall(out)) > 8: problems.append('not English')
         is_offers = bool(re.search(r'^1️⃣ ', out, re.M))
         if exp.get('kind') == 'offers' and not is_offers: problems.append('no offers')
         if exp.get('kind') == 'text' and is_offers: problems.append('offers for chit-chat')
         if exp.get('must') and not re.search(exp['must'], out): problems.append('missing ' + exp['must'])
         if exp.get('mustnot') and re.search(exp['mustnot'], out): problems.append('has ' + exp['mustnot'])
-        for c in re.findall(r'(?:碼|[Cc]ode)[：:]?[ \t]*`?([A-Z0-9][A-Z0-9_-]{2,})', out):
+        for c in re.findall(r'(?:碼|码|[Cc]ode)[：:]?[ \t]*`?([A-Z0-9][A-Z0-9_-]{2,})', out):
             if c not in codes: problems.append('invented code ' + c)
         for u in re.findall(r'https?://[^\s)]+', out):
             if u not in urls: problems.append('unknown link ' + u[:40])

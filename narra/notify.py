@@ -8,7 +8,7 @@ agent cannot open a new DM, so a person must have talked to Quidpaw in a DM befo
 """
 
 import datetime as dt, json, time
-from quidpaw import offer_lines
+from quidpaw import L, norm_lang, offer_lines, to_zh_hans
 
 try:
     from zoneinfo import ZoneInfo
@@ -20,6 +20,7 @@ DAY_START, DAY_END = 9, 21
 PER_PERSON_PER_DAY = 2
 
 SCHEMA = [
+    'create table if not exists kv (key text primary key, value text)',
     'create table if not exists users (user text primary key, room text, lang text, identity text, notify integer default 1, push_day text, pushes integer default 0)',
     'create table if not exists subs (user text, kind text, value text, label text, expires_on text, reminded integer default 0, created real, primary key (user, kind, value))',
     'create table if not exists reports (user text, room text, voucher_id text, retailer text, title text, ts real, resolved integer default 0, primary key (user, voucher_id))',
@@ -85,18 +86,37 @@ def term_start(d):
     return d.month == 9 and d.weekday() == 0 and d.day <= 7
 
 
-def changes_text(label, old, new, zh):
-    names = {'code': ('碼', 'code'), 'min_spend_gbp': ('最低消費', 'minimum spend'), 'discount_value': ('折扣', 'discount'), 'expires_on': ('到期日', 'end date')}
-    show = lambda k, x: ('無' if zh else 'none') if x in (None, '') else (f'£{x:g}' if k == 'min_spend_gbp' and isinstance(x, (int, float)) else str(x))
+def changes_text(label, old, new, lang):
+    lang = norm_lang(lang, 'zh-Hant')
+    zh = lang != 'en'
+    sc = lang == 'zh-Hans'
+    names = {
+        'code': ('码' if sc else '碼', 'code'),
+        'min_spend_gbp': ('最低消费' if sc else '最低消費', 'minimum spend'),
+        'discount_value': ('折扣', 'discount'),
+        'expires_on': ('到期日', 'end date'),
+    }
+    show = lambda k, x: (('无' if sc else '無') if zh else 'none') if x in (None, '') else (f'£{x:g}' if k == 'min_spend_gbp' and isinstance(x, (int, float)) else str(x))
     diffs = [f"{names[k][0 if zh else 1]}：{show(k, old.get(k))} → {show(k, new.get(k))}" if zh else
              f"{names[k][1]}: {show(k, old.get(k))} → {show(k, new.get(k))}" for k in names if old.get(k) != new.get(k)]
-    head = f'📝 你收藏的「{label}」條件改了：' if zh else f'📝 "{label}", which you saved, changed:'
+    lbl = to_zh_hans(label) if sc else label
+    head = L(lang, f'📝 你收藏的「{lbl}」條件改了：', f'📝 你收藏的「{lbl}」条件改了：', f'📝 "{lbl}", which you saved, changed:')
     return head + '\n' + '\n'.join('• ' + d for d in diffs)
 
 
-def localize(v, zh):
+def localize(v, lang):
     """export.json is English; the bundle carries both titles."""
-    return {**v, 'title': v.get('title_zh') if zh else v.get('title_en'), 'eligibility_zh': v.get('eligibility_zh')}
+    lang = norm_lang(lang, 'zh-Hant')
+    if lang == 'en':
+        return {**v, 'title': v.get('title_en'), 'eligibility_zh': v.get('eligibility_zh')}
+    if lang == 'zh-Hans':
+        return {
+            **v,
+            'title': to_zh_hans(v.get('title_zh') or ''),
+            'terms': to_zh_hans(v.get('terms_zh') or v.get('terms') or '') or None,
+            'eligibility_zh': to_zh_hans(v.get('eligibility_zh') or ''),
+        }
+    return {**v, 'title': v.get('title_zh'), 'eligibility_zh': v.get('eligibility_zh')}
 
 
 class Notifier:
@@ -106,9 +126,15 @@ class Notifier:
 
     def user(self, uid):
         r = self.db.execute('select room, lang, identity, notify, push_day, pushes from users where user=?', (uid,)).fetchone()
-        return dict(zip(('room', 'lang', 'identity', 'notify', 'push_day', 'pushes'), r)) if r else None
+        if not r:
+            return None
+        d = dict(zip(('room', 'lang', 'identity', 'notify', 'push_day', 'pushes'), r))
+        if d.get('lang') is not None:
+            d['lang'] = norm_lang(d['lang'], 'zh-Hant')
+        return d
 
     def remember_user(self, uid, room, lang):
+        lang = norm_lang(lang, 'zh-Hant')
         self.db.execute('insert into users(user, room, lang) values(?,?,?) on conflict(user) do update set room=excluded.room, lang=excluded.lang', (uid, room, lang))
         self.db.commit()
 
@@ -138,12 +164,13 @@ class Notifier:
 
     # ---- deciding what to say (queued; sent only in the day) ----
 
-    def _queue(self, uid, body, now, offers=None, zh=True, tail=None):
+    def _queue(self, uid, body, now, offers=None, lang='zh-Hant', tail=None, zh=None):
         """body: the lead text; offers are numbered when the day's bundle is sent, so 「收藏第 2 個」 matches."""
         u = self.user(uid)
         if not u or not u['room'] or not u['notify']:
             return
-        seg = json.dumps({'head': body, 'offers': offers or [], 'zh': zh, 'tail': tail})
+        resolved = norm_lang(zh if zh is not None else lang, 'zh-Hant')
+        seg = json.dumps({'head': body, 'offers': offers or [], 'lang': resolved, 'zh': resolved != 'en', 'tail': tail})
         self.db.execute('insert into outbox(user, room, body, created) values(?,?,?,?)', (uid, u['room'], seg, now))
         self.db.commit()
 
@@ -157,52 +184,79 @@ class Notifier:
                 if matches({'kind': kind, 'value': value}, v) and strength(v) >= (minimum or 0):
                     per_user.setdefault(uid, {}).setdefault(v['id'], (label, v))
         for uid, hits in per_user.items():
-            u = self.user(uid); zh = (u or {}).get('lang') != 'en'
+            u = self.user(uid)
+            lang = norm_lang((u or {}).get('lang'), 'zh-Hant')
             offers = [v for _, v in hits.values()][:3]
-            labels = '、'.join(sorted({l for l, _ in hits.values()})) if zh else ', '.join(sorted({l for l, _ in hits.values()}))
-            head = f'🐾 {labels} 有新優惠！' if zh else f'🐾 New from {labels}!'
-            self._queue(uid, head, now, [localize(v, zh) for v in offers], zh,
-                        '回「收藏第 1 個」到期前提醒你；回「停止通知」就不再提醒。' if zh else 'Say "save number 1" for an end reminder, or "stop alerts" to stop.')
+            raw_labels = sorted({to_zh_hans(l) if lang == 'zh-Hans' else l for l, _ in hits.values()})
+            labels = ('、' if lang != 'en' else ', ').join(raw_labels)
+            head = L(lang, f'🐾 {labels} 有新優惠！', f'🐾 {labels} 有新优惠！', f'🐾 New from {labels}!')
+            tail = L(lang,
+                     '回「收藏第 1 個」到期前提醒你；回「停止通知」就不再提醒。',
+                     '回复「收藏第 1 个」到期前提醒你；回复「停止通知」就不再提醒。',
+                     'Say "save number 1" for an end reminder, or "stop alerts" to stop.')
+            self._queue(uid, head, now, [localize(v, lang) for v in offers], lang, tail)
 
     def _saved(self, by_id, tomorrow, now):
         for uid, value, label, expires_on, reminded, fp in self.db.execute("select user, value, label, expires_on, reminded, fp from subs where kind='offer'").fetchall():
-            u = self.user(uid); zh = (u or {}).get('lang') != 'en'
+            u = self.user(uid)
+            lang = norm_lang((u or {}).get('lang'), 'zh-Hant')
+            lbl = to_zh_hans(label) if lang == 'zh-Hans' else label
             v = by_id.get(value)
             if not v:  # taken down (ended, failed a recheck, or a duplicate)
-                self._queue(uid, (f'你收藏的「{label}」已經下架了 🐾 想看同類的其他優惠就問我。' if zh else
-                                  f'"{label}", which you saved, has been taken down 🐾 Ask me for similar ones.'), now)
+                self._queue(uid, L(
+                    lang,
+                    f'你收藏的「{lbl}」已經下架了 🐾 想看同類的其他優惠就問我。',
+                    f'你收藏的「{lbl}」已经下架了 🐾 想看同类的其他优惠就问我。',
+                    f'"{lbl}", which you saved, has been taken down 🐾 Ask me for similar ones.',
+                ), now, lang=lang)
                 self.db.execute("delete from subs where user=? and kind='offer' and value=?", (uid, value))
                 continue
             now_fp = {k: v.get(k) for k in ('code', 'min_spend_gbp', 'discount_value', 'expires_on')}
             old = json.loads(fp) if fp else None
             if old and old != now_fp:
-                self._queue(uid, changes_text(label, old, now_fp, zh), now, [localize(v, zh)], zh)
+                self._queue(uid, changes_text(label, old, now_fp, lang), now, [localize(v, lang)], lang)
                 self.db.execute("update subs set fp=?, reminded=0 where user=? and kind='offer' and value=?", (json.dumps(now_fp), uid, value))
             elif not old:
                 self.db.execute("update subs set fp=? where user=? and kind='offer' and value=?", (json.dumps(now_fp), uid, value))
             if v.get('expires_on') == tomorrow and not reminded:
-                self._queue(uid, '⏰ 提醒：你收藏的優惠明天到期，記得用！' if zh else '⏰ Reminder: an offer you saved ends tomorrow!', now, [localize(v, zh)], zh)
+                self._queue(uid, L(
+                    lang,
+                    '⏰ 提醒：你收藏的優惠明天到期，記得用！',
+                    '⏰ 提醒：你收藏的优惠明天到期，记得用！',
+                    '⏰ Reminder: an offer you saved ends tomorrow!',
+                ), now, [localize(v, lang)], lang)
                 self.db.execute("update subs set reminded=1 where user=? and kind='offer' and value=?", (uid, value))
         self.db.commit()
 
     def _report_outcomes(self, by_id, now):
         rows = self.db.execute('select user, voucher_id, retailer, title, ts from reports where resolved=0').fetchall()
         for uid, vid, retailer, title, ts in rows:
-            u = self.user(uid); zh = (u or {}).get('lang') != 'en'
+            u = self.user(uid)
+            lang = norm_lang((u or {}).get('lang'), 'zh-Hant')
+            ttl = to_zh_hans(title) if lang == 'zh-Hans' else title
             v = by_id.get(vid)
             if not v:
-                body = (f'你回報的 {retailer}「{title}」確認失效，已經下架了。謝謝你幫大家省時間 🐾' if zh else
-                        f'You were right: {retailer} "{title}" no longer works and has been taken down. Thanks for helping everyone 🐾')
+                body = L(
+                    lang,
+                    f'你回報的 {retailer}「{ttl}」確認失效，已經下架了。謝謝你幫大家省時間 🐾',
+                    f'你反馈的 {retailer}「{ttl}」确认失效，已经下架了。谢谢你帮大家省时间 🐾',
+                    f'You were right: {retailer} "{ttl}" no longer works and has been taken down. Thanks for helping everyone 🐾',
+                )
             elif (v.get('last_checked_at') or '') > dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat():
                 terms = v.get('terms') or ''
-                body = (f'你回報的 {retailer}「{title}」我們重新核對過了，官網上還寫著這個優惠。可能是有限制條件' + (f'：{terms}' if terms else '，例如指定商品或最低消費') + '。' if zh else
-                        f'We rechecked {retailer} "{title}": the shop still lists it, so a condition may apply' + (f': {terms}' if terms else ' (selected items or a minimum spend)') + '.')
+                terms_s = to_zh_hans(terms) if lang == 'zh-Hans' else terms
+                body = L(
+                    lang,
+                    f'你回報的 {retailer}「{ttl}」我們重新核對過了，官網上還寫著這個優惠。可能是有限制條件' + (f'：{terms}' if terms else '，例如指定商品或最低消費') + '。',
+                    f'你反馈的 {retailer}「{ttl}」我们重新核对过了，官网上还写着这个优惠。可能是有限制条件' + (f'：{terms_s}' if terms_s else '，例如指定商品或最低消费') + '。',
+                    f'We rechecked {retailer} "{ttl}": the shop still lists it, so a condition may apply' + (f': {terms}' if terms else ' (selected items or a minimum spend)') + '.',
+                )
             elif now - ts > 3 * 86400:
                 body = None  # still waiting after 3 days: stop tracking quietly
             else:
                 continue
             if body:
-                self._queue(uid, body, now)
+                self._queue(uid, body, now, lang=lang)
             self.db.execute('update reports set resolved=1 where user=? and voucher_id=?', (uid, vid))
         self.db.commit()
 
@@ -235,7 +289,8 @@ class Notifier:
         week = f'{day.isocalendar()[0]}-W{day.isocalendar()[1]}'
         what = occasion(day)
         for uid, kind in self.db.execute("select user, kind from subs where kind in ('daily','weekly','sales','eligibility')").fetchall():
-            u = self.user(uid) or {}; zh = u.get('lang') != 'en'
+            u = self.user(uid) or {}
+            lang = norm_lang(u.get('lang'), 'zh-Hant')
             if kind == 'daily' and self._once(uid, 'daily-' + day.isoformat()):
                 # New in the last day first, then the best of the rest; never an offer this person already got as a daily pick.
                 sent = {k[len('daily-offer-'):] for k, in self.db.execute("select key from events where user=? and key like 'daily-offer-%'", (uid,))}
@@ -243,28 +298,60 @@ class Notifier:
                 for v in picks:
                     self._once(uid, 'daily-offer-' + v['id'])
                 if picks:
-                    self._queue(uid, '☀️ 今日精選：' if zh else "☀️ Today's picks:", now, [localize(v, zh) for v in picks], zh,
-                                '說「關閉每日精選」就不再收到。' if zh else 'Say "daily picks off" to stop these.')
+                    self._queue(
+                        uid,
+                        L(lang, '☀️ 今日精選：', '☀️ 今日精选：', "☀️ Today's picks:"),
+                        now,
+                        [localize(v, lang) for v in picks],
+                        lang,
+                        L(lang, '說「關閉每日精選」就不再收到。', '说「关闭每日精选」就不再收到。', 'Say "daily picks off" to stop these.'),
+                    )
             elif kind == 'weekly' and day.weekday() == 0 and self._once(uid, 'weekly-' + week):
                 picks = self._picks(uid, live, since=now - 7 * 86400)
                 if picks:  # nothing new this week: no message
-                    self._queue(uid, '🐾 本週新上架精選：' if zh else '🐾 New this week:', now, [localize(v, zh) for v in picks], zh,
-                                '說「關閉週報」就不再收到。' if zh else 'Say "weekly off" to stop these.')
+                    self._queue(
+                        uid,
+                        L(lang, '🐾 本週新上架精選：', '🐾 本周新上架精选：', '🐾 New this week:'),
+                        now,
+                        [localize(v, lang) for v in picks],
+                        lang,
+                        L(lang, '說「關閉週報」就不再收到。', '说「关闭周报」就不再收到。', 'Say "weekly off" to stop these.'),
+                    )
             elif kind == 'sales' and what and self._once(uid, f'{what}-{day.isoformat()}'):
-                head = {'black-friday-eve': ('🖤 明天就是黑色星期五！先看今天最划算的：', '🖤 Black Friday is tomorrow! The best deals today:'),
-                        'boxing-day-eve': ('🎁 Boxing Day 快到了，先看現在最划算的：', "🎁 Boxing Day is almost here. The best deals now:"),
-                        'payday': ('💷 發薪日快樂！今天最划算的幾個：', '💷 Happy payday! The best deals today:')}[what]
+                heads = {
+                    'black-friday-eve': ('🖤 明天就是黑色星期五！先看今天最划算的：', '🖤 明天就是黑色星期五！先看今天最划算的：', '🖤 Black Friday is tomorrow! The best deals today:'),
+                    'boxing-day-eve': ('🎁 Boxing Day 快到了，先看現在最划算的：', '🎁 Boxing Day 快到了，先看现在最划算的：', '🎁 Boxing Day is almost here. The best deals now:'),
+                    'payday': ('💷 發薪日快樂！今天最划算的幾個：', '💷 发薪日快乐！今天最划算的几个：', '💷 Happy payday! The best deals today:'),
+                }[what]
                 picks = self._picks(uid, live)
                 if picks:
-                    self._queue(uid, head[0] if zh else head[1], now, [localize(v, zh) for v in picks], zh,
-                                '說「關閉大促提醒」就不再收到。' if zh else 'Say "sale alerts off" to stop these.')
+                    self._queue(
+                        uid,
+                        L(lang, *heads),
+                        now,
+                        [localize(v, lang) for v in picks],
+                        lang,
+                        L(lang, '說「關閉大促提醒」就不再收到。', '说「关闭大促提醒」就不再收到。', 'Say "sale alerts off" to stop these.'),
+                    )
             elif kind == 'eligibility' and term_start(day) and self._once(uid, f'term-{day.year}'):
                 picks = [v for v in self._picks(uid, live, n=10) if v.get('eligibility') == 'student'][:3]
                 if picks and (self.db.execute("select 1 from subs where user=? and kind='eligibility' and value='student'", (uid,)).fetchone()):
-                    self._queue(uid, '🎒 開學快樂！學生優惠精選：' if zh else '🎒 New term! Student picks:', now, [localize(v, zh) for v in picks], zh)
+                    self._queue(
+                        uid,
+                        L(lang, '🎒 開學快樂！學生優惠精選：', '🎒 开学快乐！学生优惠精选：', '🎒 New term! Student picks:'),
+                        now,
+                        [localize(v, lang) for v in picks],
+                        lang,
+                    )
         self.db.commit()
 
     # ---- sending ----
+
+    def _room_paused(self, room):
+        if not self.db.execute("select 1 from sqlite_master where type='table' and name='rooms'").fetchone():
+            return False
+        row = self.db.execute('select paused from rooms where room=?', (room,)).fetchone()
+        return bool(row and row[0])
 
     async def _flush(self, today):
         for uid, in self.db.execute('select distinct user from outbox').fetchall():
@@ -275,9 +362,12 @@ class Notifier:
                 continue  # tomorrow
             # Bundle everything waiting into one message, offers numbered straight through.
             room, parts, shown = rows[-1][1], [], []
+            if self._room_paused(room):
+                continue
             segs = [json.loads(raw) for _, _, raw in rows]
             for k, seg in enumerate(segs):
-                block = [seg['head']] + [offer_lines(len(shown) + i, v, seg['zh']) for i, v in enumerate(seg['offers'], 1)]
+                seg_lang = norm_lang(seg.get('lang'), 'zh-Hant' if seg.get('zh', True) else 'en')
+                block = [seg['head']] + [offer_lines(len(shown) + i, v, seg_lang) for i, v in enumerate(seg['offers'], 1)]
                 shown += seg['offers']
                 if seg.get('tail') and not any(later.get('tail') == seg['tail'] for later in segs[k + 1:]):
                     block.append(seg['tail'])  # the how-to line once, at the end
@@ -289,6 +379,8 @@ class Notifier:
                 self.db.commit()
 
     async def _post(self, room, body, uid=None, offers=None):
+        if self._room_paused(room):
+            return False
         try:
             await self.send(room, body, uid, [{k: v.get(k) for k in ('id', 'retailer', 'title', 'expires_on', 'code')} for v in offers or []])
             return True
