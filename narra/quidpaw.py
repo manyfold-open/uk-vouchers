@@ -153,6 +153,57 @@ THANKS = re.compile(r'^\s*(thanks?|thank (you|u)|thx|ty|tysm|ta|cheers( mate)?|t
 BROWSE = re.compile(r'\b(deals?|offers?|codes?|promos?|promo codes?|sales?|discounts?|vouchers?|coupons?)\b|折價|折价|優惠|优惠|折扣|打折|(?<![密號号])碼|(?<![密號号])码|特價|特价|便宜|平嘢|省錢|省钱|手上有', re.I)
 # A message that leans on the previous turn ("那學生的呢", "what about Tesco").
 FOLLOW_UP = re.compile(r'^\s*(那|還有|还有|再|其他|另外|換|换|也|咁|仲有|有冇.{0,6}嘅|and |what about|how about|any other|any (for|with)\b|more\b|others?\b)', re.I)
+# Unmentioned group triage patterns (closing, past-tense anecdotes, peer-agent anti-domains, deal seeking).
+UNMENTIONED_CLOSING_RE = re.compile(
+    r'^(?:'
+    r'(?:謝啦|谢啦|謝謝|谢谢|感謝|感谢|多謝|多谢|thanks?|thx|ty)(?:[，,\s]*(?:那我|我)?(?:等下|等會|先|去|好|ok).*)?'
+    r'|(?:好喔|好的|好哦|了解|收到|知道了|明白|ok(?:ay)?|got it|cool|sounds good|makes sense|nice|great|awesome)'
+    r'|(?:晚點見|晚点见|先走了|去買了|去买了|我等下上網結帳|我等下上网结账|我等下走過去|掰掰|bye|see you|哈哈+|lol|lmao)'
+    r')[\s!！。.~～]*$',
+    re.I,
+)
+LIVE_ASK_CUE_RE = re.compile(
+    r'[?？]|有沒有|有没有|有冇|請問|请问|推薦|推荐|幫(?:我)?查|帮(?:我)?查|現在有|现在有|'
+    r'求(?:碼|码|推薦|推荐|優惠|优惠|折扣)|哪裡買|哪里买|怎麼省|怎么省|'
+    r'\b(?:anyone\s+know|any\s+(?:codes?|deals?|vouchers?|discounts?)|where\s+can\s+i|how\s+to\s+save|do\s+you\s+have)\b',
+    re.I,
+)
+PAST_ANECDOTE_RE = re.compile(
+    r'(?:昨晚|昨天|前天|上週|上周|上個月|上个月|上次|剛剛|刚刚|剛才|刚才|之前買過|之前买过|'
+    r'yesterday|last\s+(?:night|week|month|weekend)|earlier\s+today|just\s+bought|already\s+bought)',
+    re.I,
+)
+ANTI_DOMAIN_RE = re.compile(
+    r'(?:'
+    r'中餐|餐廳|餐厅|川菜|火鍋|火锅|拉麵|拉面|麵館|面馆|點心|点心|奶茶|好餓|好饿|吃什麼|吃什么|吃飯|吃饭|宵夜|dim\s*sum|hotpot|ramen|restaurant'
+    r'|塔羅|塔罗|占卜|算命|抽牌|求籤|求签|問一籤|问一签|運勢|运势|換跑道|换跑道|\btarot\b|fortune\s*stick'
+    r'|快閃|快闪|展覽|展览|市集|逛逛|pop-?up|exhibition|weekend\s+market'
+    r'|黑客松|\bhackathon\b|簽證|签证|\bvisa\b|獎學金|奖学金|\bscholarship\b|食品召回|food\s+recall'
+    r'|ai\s*(?:新聞|新闻|圈|要聞|要闻|日報|日报)|大模型|新模型|\bopenai\b|\banthropic\b|\bclaude\b|\bgemini\b|\bdeepseek\b|\bnvidia\b'
+    r'|分帳|分账|平分|aa制|(?<![a-z])aa(?![a-z])|墊錢|垫钱|欠多少|記帳|记账|結算|结算|splitwise|(?<![a-z])owes?(?![a-z])'
+    r'|who\s+paid|i\s+paid\s*[£$€\d]|我付了|我先付|花了\s*[£$€]\s*\d|付了\s*[£$€]\s*\d|買了\s*[£$€]\s*\d|买了\s*[£$€]\s*\d'
+    r')',
+    re.I,
+)
+EXPLICIT_VOUCHER_CUE_RE = re.compile(
+    r'優惠碼|优惠码|折價碼|折价码|折扣碼|折扣码|折價券|折价券|優惠券|优惠券|折扣|打折|特價|特价|'
+    r'便宜一點|便宜一点|便宜點|便宜点|省錢|省钱|免運|免运|'
+    r'promo\s*codes?|discount\s*codes?|voucher\s*codes?|vouchers?|coupons?|student\s+discounts?|unidays|blue\s*light|'
+    r'學生折|学生折|學生優惠|学生优惠|首購|首购|新客優惠|新客优惠|'
+    r'有沒有碼|有没有码|有碼嗎|有码吗|有折扣嗎|有折扣吗|有優惠嗎|有优惠吗|deals?\s+(?:for|on|at)|code\s+for\b',
+    re.I,
+)
+SEEKING_CUE_RE = re.compile(
+    r'[?？]|有沒有|有没有|有冇|求|想買|想买|準備買|准备买|打算買|打算买|要買|要买|推薦|推荐|哪裡買|哪里买|'
+    r'怎麼省|怎么省|怎樣省|怎样省|怎麼買|怎么买|幫查|帮查|找|請問|请问|划算|'
+    r'\b(?:any|anyone\s+know|looking\s+for|where|how\s+to\s+save|cheaper|best|can\s+i\s+get|need|want\s+to\s+buy|thinking\s+of\s+buying|planning\s+to\s+buy|going\s+to\s+buy|worth\s+buying)\b',
+    re.I,
+)
+PRICE_SENSITIVE_BUY_RE = re.compile(
+    r'好貴|好贵|太貴|太贵|有點貴|有点贵|能便宜|想省|省點|省点|划算|怎麼買便宜|怎么买便宜|學生價|学生价|'
+    r'\b(?:student\s+price|too\s+expensive|cheaper|save\s+money|save\s+on|money\s+off|off\s+at)\b|%\s*off|percent\s+off',
+    re.I,
+)
 # Plain English words: a message with any of these is English even when it is short. ("OK" alone inherits recent chat language.)
 ENGLISH_WORDS = re.compile(r"\b(is|are|was|it|the|didn.?t|doesn.?t|don.?t|work|works|expired|invalid|yes|no|more|please|any|what|how|for|and|one|number|thanks?|save|stop|show)\b", re.I)
 ENDING = re.compile(r'\b(ending|ends?|expir\w*|soon)\b|到期|結束|结束|截止|快沒了|快没了|最後|最后', re.I)
@@ -172,6 +223,7 @@ ALIASES = {
     'new-customer': ['新客', 'new customer', 'first order', '新用戶', '新用户', '首購', '首购', '首單', '首单', '第一單', '第一单'],
     'nhs-blue-light': ['nhs', 'blue light'],
     'members': ['會員', '会员', 'member'],
+    'everyone': ['一般人', '普通人', '非學生', '非学生', '不用學生', '不用学生', 'everyone', 'anyone', 'general'],
 }
 RETAILER_ALIASES = {'marks & spencer': ['m&s', 'marks and spencer', 'marks & spencer', 'm and s'],
                     "sainsbury's": ['sainsbury', 'sainsburys'], 'mamas & papas': ['mamas and papas'],
@@ -340,6 +392,43 @@ class Brain:
         if p.get('category') or p.get('eligibility'):
             return True
         if re.search(r'\b[A-Z]{2,}[0-9]{1,3}\b', t) and re.search(r'\b(use[ds]?|found|share|code|promo)\b|用了|分享|碼|码', t, re.I):
+            return True
+        return False
+
+    async def should_reply_unmentioned(self, text, *, active_session=False, has_pending_sub=False):
+        """Strict unmentioned group triage ("讀空氣"): only interject on live deal/saving queries or active follow-ups."""
+        t = (text or '').strip()
+        if not t or GREETING.match(t) or THANKS.match(t) or HELP.match(t):
+            return False
+        if UNMENTIONED_CLOSING_RE.match(t) and not LIVE_ASK_CUE_RE.search(t):
+            return False
+        if has_pending_sub and (YES.match(t) or NO.match(t)):
+            return True
+        if PAST_ANECDOTE_RE.search(t) and not LIVE_ASK_CUE_RE.search(t):
+            return False
+        if ANTI_DOMAIN_RE.search(t) and not EXPLICIT_VOUCHER_CUE_RE.search(t):
+            return False
+        # Also block Penny expense-splitting even if mixed with vague savings words, unless explicit promo/voucher code ask.
+        if re.search(r'平分|分帳|分账|aa制|splitwise|幫大家平分|帮大家平分|幫大家墊|帮大家垫', t, re.I) and not re.search(r'優惠碼|优惠码|折扣碼|折扣码|promo\s*code|voucher', t, re.I):
+            return False
+        if active_session:
+            if MORE.match(t) or REPORT.search(t) or ENDING.search(t):
+                return True
+            p = await self.rules(t)
+            if (FOLLOW_UP.search(t) or len(t) <= 32) and (
+                (p.get('retailer') and not p.get('_ambiguous'))
+                or p.get('category')
+                or p.get('eligibility')
+                or EXPLICIT_VOUCHER_CUE_RE.search(t)
+                or re.search(r'一般人|所有人|非學生|非学生|everyone|general|其他人|其他店|還有|还有|換|换', t, re.I)
+            ):
+                return True
+        if len(t) < 4:
+            return False
+        if EXPLICIT_VOUCHER_CUE_RE.search(t) and SEEKING_CUE_RE.search(t):
+            return True
+        p = await self.rules(t)
+        if p.get('retailer') and not p.get('_ambiguous') and (PRICE_SENSITIVE_BUY_RE.search(t) or EXPLICIT_VOUCHER_CUE_RE.search(t)):
             return True
         return False
 
